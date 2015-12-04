@@ -1,0 +1,6 @@
+[submodule "hcurand"]
+	path = hcurand
+	url = git@github.com:alexisVallet/hcurand.git
+[submodule "hcudnn"]
+	path = hcudnn
+	url = git@github.com:alexisVallet/hcudnn.git
