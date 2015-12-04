@@ -1,0 +1,38 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>Data.HList.RecordPuns</title><link href="ocean.css" rel="stylesheet" type="text/css" title="Ocean" /><script src="haddock-util.js" type="text/javascript"></script><script type="text/javascript">//<![CDATA[
+window.onload = function () {pageLoad();setSynopsis("mini_Data-HList-RecordPuns.html");};
+//]]>
+</script></head><body><div id="package-header"><ul class="links" id="page-menu"><li><a href="src/Data-HList-RecordPuns.html">Source</a></li><li><a href="index.html">Contents</a></li><li><a href="doc-index.html">Index</a></li></ul><p class="caption">HList-0.4.1.0: Heterogeneous lists</p></div><div id="content"><div id="module-header"><table class="info"><tr><th>Safe Haskell</th><td>None</td></tr><tr><th>Language</th><td>Haskell2010</td></tr></table><p class="caption">Data.HList.RecordPuns</p></div><div id="description"><p class="caption">Description</p><div class="doc empty">&nbsp;</div></div><div id="synopsis"><p id="control.syn" class="caption expander" onclick="toggleSection('syn')">Synopsis</p><ul id="section.syn" class="hide" onclick="toggleSection('syn')"><li class="src short"><a href="#v:pun">pun</a> :: <a href="../template-haskell-2.9.0.0/Language-Haskell-TH-Quote.html#t:QuasiQuoter">QuasiQuoter</a></li></ul></div><div id="interface"><h1>Documentation</h1><div class="doc"><pre class="screen"><code class="prompt">&gt;&gt;&gt; </code><strong class="userinput"><code>:set -XQuasiQuotes -XViewPatterns
+</code></strong></pre><dl><dt><code>patterns</code></dt><dd></dd></dl><pre class="screen"><code class="prompt">&gt;&gt;&gt; </code><strong class="userinput"><code>let y = Label :: Label &quot;y&quot;
+</code></strong><code class="prompt">&gt;&gt;&gt; </code><strong class="userinput"><code>let x = Label :: Label &quot;x&quot;
+</code></strong><code class="prompt">&gt;&gt;&gt; </code><strong class="userinput"><code>[pun| x y |] &lt;- return (x .=. 3 .*. y .=. &quot;hi&quot; .*. emptyRecord)
+</code></strong><code class="prompt">&gt;&gt;&gt; </code><strong class="userinput"><code>print (x,y)
+</code></strong>(3,&quot;hi&quot;)
+</pre><dl><dt><code>expressions</code></dt><dd></dd></dl><p>Compare with the standard way to construct records above</p><pre class="screen"><code class="prompt">&gt;&gt;&gt; </code><strong class="userinput"><code>let x = 3; y = &quot;hi&quot;
+</code></strong><code class="prompt">&gt;&gt;&gt; </code><strong class="userinput"><code>[pun|x y|]
+</code></strong>Record{x=3,y=&quot;hi&quot;}
+</pre><dl><dt><code>nesting</code></dt><dd></dd></dl><p>Nesting is supported. The idea is that variables inside
+<code>{ }</code> are in another record. More concretely:</p><pre>[pun| ab@{ a b } y z c{d} |]</pre><p>as a pattern, it will bindings from an original record <code>x</code>,
+if you interpret (.) as a left-associative field lookup (as it
+is in other languages):</p><pre>let ab = xab
+    a = x.ab.a
+    b = x.ab.b
+    y = x.y
+    z = x.z
+    -- c is not bound
+    d = x.c.d</pre><p>as an expression, it creates a new record which needs the variables
+<code>ab a b y z d</code> in-scope. <code>ab</code> needs to be a record, and if it has
+fields called <code>a</code> or <code>b</code> they are overridden by the values of <code>a</code> and <code>b</code>
+which are in scope.</p><p><code>( )</code> parens mean the same thing as <code>{ }</code>, except the pattern match
+restricts the fields in the record supplied to be exactly the ones
+provided. In other words</p><pre>[pun| (x _ y{}) |] = list
+-- desugars to something like:
+Record ((Tagged x :: Tagged &quot;x&quot; s1) `HCons`
+        (Tagged _ :: Tagged t   s2) `HCons`
+        (Tagged _ :: Tagged &quot;y&quot; s3) `HCons`
+         HNil) = list</pre><p>Where the <code>s1</code> and <code>s2</code> are allowed to fit whatever is in the HList.
+Note that this also introduces the familiar wild card pattern (<code>_</code>),
+and shows again how to ensure a label is present but not bind a variable
+to it.</p><p>See also <code>examples/pun.hs</code>. In <code>{}</code> patterns, <code>pun</code> can work with
+<code>Variant</code> too.</p></div><div class="top"><p class="src"><a name="v:pun" class="def">pun</a> :: <a href="../template-haskell-2.9.0.0/Language-Haskell-TH-Quote.html#t:QuasiQuoter">QuasiQuoter</a> <a href="src/Data-HList-RecordPuns.html#pun" class="link">Source</a></p><div class="doc"><p>requires labels to be promoted strings (kind Symbol), as provided by
+ <a href="Data-HList-Label6.html">Data.HList.Label6</a> (ie. the label for foo is <code>Label :: Label &quot;foo&quot;</code>),
+ or <a href="Data-HList-Labelable.html">Data.HList.Labelable</a></p></div></div></div></div><div id="footer"><p>Produced by <a href="http://www.haskell.org/haddock/">Haddock</a> version 2.15.0.2</p></div></body></html>
