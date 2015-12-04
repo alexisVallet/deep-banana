@@ -4,3 +4,6 @@
 [submodule "hcudnn"]
 	path = hcudnn
 	url = git@github.com:alexisVallet/hcudnn.git
+[submodule "doc"]
+	path = doc
+	url = git@github.com:alexisVallet/deep-banana.git
