@@ -1,3 +1,2 @@
-# hnn
-Simple GPU neural network library based on CuDNN.
-Very much toy code at this point, highly experimental.
+# deep-banana
+A GPU accelerated deep learning library for the Haskell programming language.
