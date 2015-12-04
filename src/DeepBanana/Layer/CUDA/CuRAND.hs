@@ -37,9 +37,9 @@ dropoutMaskIO :: forall a s . (TensorScalar a, Shape s)
               -> IO (IOTensor s a)
 dropoutMaskIO gen drop_proba = do
   -- Simple algo for dropout of activations:
-  -- * generate an array of random values between 0 and 1
-  -- * threshold that array with the dropout probability
-  -- * elementwise multiply the input array with it
+  -- 1- generate an array of random values between 0 and 1
+  -- 2- threshold that array with the dropout probability
+  -- 3- elementwise multiply the input array with it
   rand_array <- emptyTensor
   withDevicePtr rand_array $ \randarrayptr -> do
     -- generate random array
