@@ -120,6 +120,26 @@ class Shape (s :: [Nat]) where type family Size s :: Nat type family Nbdim s :: 
 shape :: Shape s => Proxy s -> [Int]
 nbdim :: Shape s => Proxy s -> Int
 size :: Shape s => Proxy s -> Int
+
+-- | Type level function to compute the quotient of the division of
+--   <tt>m</tt> by <tt>n</tt>.
+--   
+--   <pre>
+--   natVal (Proxy :: Proxy (Quotient m n)) == natVal (Proxy :: Proxy m) <a>div</a> natVal (Proxy :: Proxy n)
+--   </pre>
+
+-- | Type level function to compute the remainder of the division of
+--   <tt>m</tt> by <tt>n</tt>.
+--   
+--   <pre>
+--   natVal (Proxy :: Proxy (Remainder m n)) == natVal (Proxy :: Proxy m) <a>rem</a> natVal (Proxy :: Proxy n)
+--   </pre>
+
+-- | Type level max function for type-level natural numbers.
+--   
+--   <pre>
+--   natVal (Proxy :: Proxy (Max m n)) == max (natVal (Proxy :: Proxy m)) (natVal (Proxy :: Proxy n))
+--   </pre>
 instance (KnownNat e1, Shape (e2 : l)) => Shape (e1 : e2 : l)
 instance KnownNat n => Shape '[n]
 instance Shape '[]
