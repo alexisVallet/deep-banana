@@ -116,7 +116,7 @@ instance Generic CFloat
 module DeepBanana.Tensor.Shape
 
 -- | Type class for tensor shapes.
-class Shape (s :: [Nat]) where type family Size s :: Nat type family Nbdim s :: Nat nbdim p = length $ shape p size p = product $ shape p
+class Shape (s :: [Nat]) where type family Size s :: Nat type family Nbdim s :: Nat nbdim p = length $ shape p size p = case shape p of { [] -> 0 xs -> product xs }
 shape :: Shape s => Proxy s -> [Int]
 nbdim :: Shape s => Proxy s -> Int
 size :: Shape s => Proxy s -> Int
@@ -129,7 +129,7 @@ data MTensor st (shp :: [Nat]) a
 MTensor :: (ForeignPtr a) -> MTensor st a
 
 -- | Type class for tensor shapes.
-class Shape (s :: [Nat]) where type family Size s :: Nat type family Nbdim s :: Nat nbdim p = length $ shape p size p = product $ shape p
+class Shape (s :: [Nat]) where type family Size s :: Nat type family Nbdim s :: Nat nbdim p = length $ shape p size p = case shape p of { [] -> 0 xs -> product xs }
 shape :: Shape s => Proxy s -> [Int]
 nbdim :: Shape s => Proxy s -> Int
 size :: Shape s => Proxy s -> Int
