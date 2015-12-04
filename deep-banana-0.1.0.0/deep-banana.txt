@@ -63,7 +63,17 @@ tpowDouble :: DevicePtr CDouble -> DevicePtr CDouble -> CSize -> IO ()
 tmax :: DevicePtr CFloat -> DevicePtr CFloat -> CSize -> IO ()
 tmaxDouble :: DevicePtr CDouble -> DevicePtr CDouble -> CSize -> IO ()
 
+
+-- | Defines datatype which can be used as scalar elements for a tensor.
+--   Also exports much needed, although orphan instances for <a>CFloat</a>
+--   and <a>CDouble</a>: <a>Generic</a>, <a>NFData</a> and
+--   <a>Serialize</a>.
 module DeepBanana.Tensor.TensorScalar
+
+-- | Type class for tensor scalars. Basically requires them to be storable,
+--   serializable, deepseqable numbers that can be handled by CUDA, Cublas,
+--   CuDNN and Haskell. Basically requires low-level routines that can be
+--   used to implement numeric routines efficiently.
 class (Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, Serialize a, NFData a) => TensorScalar a
 datatype :: TensorScalar a => Proxy a -> DataType
 thresh :: TensorScalar a => DevicePtr a -> CSize -> a -> DevicePtr a -> IO ()
@@ -154,6 +164,11 @@ shape :: Shape s => Proxy s -> [Int]
 nbdim :: Shape s => Proxy s -> Int
 size :: Shape s => Proxy s -> Int
 type IOTensor = MTensor RealWorld
+
+-- | Type class for tensor scalars. Basically requires them to be storable,
+--   serializable, deepseqable numbers that can be handled by CUDA, Cublas,
+--   CuDNN and Haskell. Basically requires low-level routines that can be
+--   used to implement numeric routines efficiently.
 class (Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, Serialize a, NFData a) => TensorScalar a
 datatype :: TensorScalar a => Proxy a -> DataType
 thresh :: TensorScalar a => DevicePtr a -> CSize -> a -> DevicePtr a -> IO ()
