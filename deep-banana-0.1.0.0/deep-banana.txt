@@ -125,17 +125,17 @@ size :: Shape s => Proxy s -> Int
 --   <tt>m</tt> by <tt>n</tt>.
 --   
 --   <pre>
---   natVal (Proxy :: Proxy (Quotient m n)) == natVal (Proxy :: Proxy m) <a>div</a> natVal (Proxy :: Proxy n)
+--   natVal (Proxy :: Proxy (Quotient m n)) == natVal (Proxy :: Proxy m) `div` natVal (Proxy :: Proxy n)
 --   </pre>
 
 -- | Type level function to compute the remainder of the division of
 --   <tt>m</tt> by <tt>n</tt>.
 --   
 --   <pre>
---   natVal (Proxy :: Proxy (Remainder m n)) == natVal (Proxy :: Proxy m) <a>rem</a> natVal (Proxy :: Proxy n)
+--   natVal (Proxy :: Proxy (Remainder m n)) == natVal (Proxy :: Proxy m) `rem` natVal (Proxy :: Proxy n)
 --   </pre>
 
--- | Type level max function for type-level natural numbers.
+-- | Type level max function.
 --   
 --   <pre>
 --   natVal (Proxy :: Proxy (Max m n)) == max (natVal (Proxy :: Proxy m)) (natVal (Proxy :: Proxy n))

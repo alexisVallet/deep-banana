@@ -34,7 +34,7 @@
 <a name="line-25"></a>It also means that currently, we cannot handle tensors with (even partially) dynamic
 <a name="line-26"></a>shapes. Although this is rarely an issue when training a neural network - which mostly
 <a name="line-27"></a>expect inputs of a given size - 2d convolution layers are sometimes applied to inputs
-<a name="line-28"></a>of varying width and height at test time. This should be adressed in the future.
+<a name="line-28"></a>of varying width and height at test time. This should be adressed in a future release.
 <a name="line-29"></a>-}</span>
 <a name="line-30"></a>
 <a name="line-31"></a><a name="Shape"></a><span class='hs-comment'>-- | Type class for tensor shapes.</span>
@@ -97,30 +97,24 @@
 <a name="line-88"></a>
 <a name="line-89"></a><span class='hs-comment'>-- | Type level function to compute the quotient of the division of 'm' by 'n'.</span>
 <a name="line-90"></a><span class='hs-comment'>--</span>
-<a name="line-91"></a><span class='hs-comment'>-- @</span>
-<a name="line-92"></a><span class='hs-comment'>--   natVal (Proxy :: Proxy (Quotient m n)) == natVal (Proxy :: Proxy m) `div` natVal (Proxy :: Proxy n)</span>
-<a name="line-93"></a><span class='hs-comment'>-- @</span>
-<a name="line-94"></a><span class='hs-keyword'>type</span> <span class='hs-varid'>family</span> <span class='hs-conid'>Quotient</span> <span class='hs-layout'>(</span><span class='hs-varid'>m</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
-<a name="line-95"></a>  <span class='hs-conid'>Quotient</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-keyglyph'>=</span> <span class='hs-conid'>Quotient'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-layout'>(</span><span class='hs-conid'>CmpNat</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span><span class='hs-layout'>)</span>
-<a name="line-96"></a>
-<a name="line-97"></a><span class='hs-comment'>-- | Type level function to compute the remainder of the division of 'm' by 'n'.</span>
-<a name="line-98"></a><span class='hs-comment'>--</span>
-<a name="line-99"></a><span class='hs-comment'>-- @</span>
-<a name="line-100"></a><span class='hs-comment'>--   natVal (Proxy :: Proxy (Remainder m n)) == natVal (Proxy :: Proxy m) `rem` natVal (Proxy :: Proxy n)</span>
-<a name="line-101"></a><span class='hs-comment'>-- @</span>
-<a name="line-102"></a><span class='hs-keyword'>type</span> <span class='hs-varid'>family</span> <span class='hs-conid'>Remainder</span> <span class='hs-layout'>(</span><span class='hs-varid'>m</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
-<a name="line-103"></a>  <span class='hs-conid'>Remainder</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-keyglyph'>=</span> <span class='hs-conid'>Remainder'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-layout'>(</span><span class='hs-conid'>CmpNat</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span><span class='hs-layout'>)</span>
+<a name="line-91"></a><span class='hs-comment'>-- &gt; natVal (Proxy :: Proxy (Quotient m n)) == natVal (Proxy :: Proxy m) `div` natVal (Proxy :: Proxy n)</span>
+<a name="line-92"></a><span class='hs-keyword'>type</span> <span class='hs-varid'>family</span> <span class='hs-conid'>Quotient</span> <span class='hs-layout'>(</span><span class='hs-varid'>m</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
+<a name="line-93"></a>  <span class='hs-conid'>Quotient</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-keyglyph'>=</span> <span class='hs-conid'>Quotient'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-layout'>(</span><span class='hs-conid'>CmpNat</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span><span class='hs-layout'>)</span>
+<a name="line-94"></a>
+<a name="line-95"></a><span class='hs-comment'>-- | Type level function to compute the remainder of the division of 'm' by 'n'.</span>
+<a name="line-96"></a><span class='hs-comment'>--</span>
+<a name="line-97"></a><span class='hs-comment'>-- &gt; natVal (Proxy :: Proxy (Remainder m n)) == natVal (Proxy :: Proxy m) `rem` natVal (Proxy :: Proxy n)</span>
+<a name="line-98"></a><span class='hs-keyword'>type</span> <span class='hs-varid'>family</span> <span class='hs-conid'>Remainder</span> <span class='hs-layout'>(</span><span class='hs-varid'>m</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
+<a name="line-99"></a>  <span class='hs-conid'>Remainder</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-keyglyph'>=</span> <span class='hs-conid'>Remainder'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-layout'>(</span><span class='hs-conid'>CmpNat</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span><span class='hs-layout'>)</span>
+<a name="line-100"></a>
+<a name="line-101"></a><span class='hs-keyword'>type</span> <span class='hs-varid'>family</span> <span class='hs-conid'>Max'</span> <span class='hs-layout'>(</span><span class='hs-varid'>m</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>ord</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Ordering</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
+<a name="line-102"></a>  <span class='hs-conid'>Max'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-chr'>'</span><span class='hs-conid'>LT</span> <span class='hs-keyglyph'>=</span> <span class='hs-varid'>n</span>
+<a name="line-103"></a>  <span class='hs-conid'>Max'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-varid'>o</span> <span class='hs-keyglyph'>=</span> <span class='hs-varid'>m</span>
 <a name="line-104"></a>
-<a name="line-105"></a><span class='hs-keyword'>type</span> <span class='hs-varid'>family</span> <span class='hs-conid'>Max'</span> <span class='hs-layout'>(</span><span class='hs-varid'>m</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>ord</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Ordering</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
-<a name="line-106"></a>  <span class='hs-conid'>Max'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-chr'>'</span><span class='hs-conid'>LT</span> <span class='hs-keyglyph'>=</span> <span class='hs-varid'>n</span>
-<a name="line-107"></a>  <span class='hs-conid'>Max'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-varid'>o</span> <span class='hs-keyglyph'>=</span> <span class='hs-varid'>m</span>
-<a name="line-108"></a>
-<a name="line-109"></a><span class='hs-comment'>-- | Type level max function for type-level natural numbers.</span>
-<a name="line-110"></a><span class='hs-comment'>--</span>
-<a name="line-111"></a><span class='hs-comment'>-- @</span>
-<a name="line-112"></a><span class='hs-comment'>--   natVal (Proxy :: Proxy (Max m n)) == max (natVal (Proxy :: Proxy m)) (natVal (Proxy :: Proxy n))</span>
-<a name="line-113"></a><span class='hs-comment'>-- @</span>
-<a name="line-114"></a><span class='hs-keyword'>type</span> <span class='hs-varid'>family</span> <span class='hs-conid'>Max</span> <span class='hs-layout'>(</span><span class='hs-varid'>m</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
-<a name="line-115"></a>  <span class='hs-conid'>Max</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-keyglyph'>=</span> <span class='hs-conid'>Max'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-layout'>(</span><span class='hs-conid'>CmpNat</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span><span class='hs-layout'>)</span>
+<a name="line-105"></a><span class='hs-comment'>-- | Type level max function.</span>
+<a name="line-106"></a><span class='hs-comment'>--</span>
+<a name="line-107"></a><span class='hs-comment'>-- &gt; natVal (Proxy :: Proxy (Max m n)) == max (natVal (Proxy :: Proxy m)) (natVal (Proxy :: Proxy n))</span>
+<a name="line-108"></a><span class='hs-keyword'>type</span> <span class='hs-varid'>family</span> <span class='hs-conid'>Max</span> <span class='hs-layout'>(</span><span class='hs-varid'>m</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
+<a name="line-109"></a>  <span class='hs-conid'>Max</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-keyglyph'>=</span> <span class='hs-conid'>Max'</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span> <span class='hs-layout'>(</span><span class='hs-conid'>CmpNat</span> <span class='hs-varid'>m</span> <span class='hs-varid'>n</span><span class='hs-layout'>)</span>
 </pre></body>
 </html>
