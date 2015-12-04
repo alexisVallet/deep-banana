@@ -72,8 +72,7 @@ module DeepBanana.Tensor.TensorScalar
 
 -- | Type class for tensor scalars. Basically requires them to be storable,
 --   serializable, deepseqable numbers that can be handled by CUDA, Cublas,
---   CuDNN and Haskell. Basically requires low-level routines that can be
---   used to implement numeric routines efficiently.
+--   CuDNN and Haskell. Basically requires low-level numeric routines.
 class (Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, Serialize a, NFData a) => TensorScalar a
 datatype :: TensorScalar a => Proxy a -> DataType
 thresh :: TensorScalar a => DevicePtr a -> CSize -> a -> DevicePtr a -> IO ()
@@ -155,8 +154,8 @@ instance KnownNat n => Shape '[n]
 instance Shape '[]
 
 
--- | Mutable GPU tensors, parametrized by the state token of some primitive
---   state monad.
+-- | Mutable GPU multi-dimensional dense numeric arrays, parametrized by
+--   the state token of some primitive state monad.
 module DeepBanana.Tensor.Mutable
 
 -- | Mutable tensor, parametrized by some state token <tt>st</tt>.
@@ -174,8 +173,7 @@ type IOTensor = MTensor RealWorld
 
 -- | Type class for tensor scalars. Basically requires them to be storable,
 --   serializable, deepseqable numbers that can be handled by CUDA, Cublas,
---   CuDNN and Haskell. Basically requires low-level routines that can be
---   used to implement numeric routines efficiently.
+--   CuDNN and Haskell. Basically requires low-level numeric routines.
 class (Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, Serialize a, NFData a) => TensorScalar a
 datatype :: TensorScalar a => Proxy a -> DataType
 thresh :: TensorScalar a => DevicePtr a -> CSize -> a -> DevicePtr a -> IO ()
@@ -310,20 +308,71 @@ instance AdditiveGroup (HLSpace a '[])
 instance Show (HList l) => Show (HLSpace a l)
 instance (AdditiveGroup (HLSpace a w), Monad m) => Category (Layer m a w)
 
+
+-- | GPU multi-dimensional dense numeric arrays.
 module DeepBanana.Tensor
-dtype :: TensorScalar a => Tensor s a -> DataType
+
+-- | An immutable, GPU tensor with a given shape, whose scalars should be
+--   instances of <a>TensorScalar</a>. Such tensors are instances of
+--   <a>Num</a>, <a>Fractional</a> and <a>Floating</a>, implementing all
+--   the numeric operations in an elementwise fashion:
+--   
+--   <pre>
+--   &gt;&gt;&gt; fromList [1,2,3] + fromList [3,4,5] :: Tensor '[3] CFloat
+--   Tensor [3] [4.0,6.0,8.0]
+--   </pre>
+--   
+--   Scalars are automatically broadcast to whatever shape is necessary:
+--   
+--   <pre>
+--   &gt;&gt;&gt; 5 * fromList [1,2,3] :: Tensor '[3] CFloat
+--   Tensor [3] [5.0,10.0,15.0]
+--   </pre>
 data Tensor (s :: [Nat]) a
 Tensor :: (ForeignPtr a) -> Tensor a
+
+-- | Returns the CuDNN datatype of a tensor.
+dtype :: TensorScalar a => Tensor s a -> DataType
+
+-- | Type safe reshaping.
 reshape :: (Shape s1, Shape s2, Size s1 ~ Size s2) => Tensor s1 a -> Tensor s2 a
+
+-- | Converts a mutable tensor into an immutable one in O(1) time. The data
+--   is not copied, so one should make sure the input mutable tensor is not
+--   modified after the the conversion. Unsafe.
 unsafeFreeze :: PrimMonad m => MTensor (PrimState m) s a -> m (Tensor s a)
+
+-- | Converts an immutable tensor into a mutable one in O(1) time. The data
+--   is not copied, so one should make sure the input immutable tensor is
+--   not used after the conversion. Unsafe.
 unsafeThaw :: PrimMonad m => Tensor s a -> m (MTensor (PrimState m) s a)
+
+-- | Initializes a tensor from list data. If the length of the list does
+--   not correspond to the size of the desired shapes, throws an exception
+--   at run time.
 fromList :: (TensorScalar a, Shape s) => [a] -> Tensor s a
+
+-- | Converts a tensor to a list.
 toList :: (TensorScalar a, Shape s) => Tensor s a -> [a]
+
+-- | Converts a storable vector to an immutable tensor. Throws an error at
+--   runtime when the input's length does not correspond to the desired
+--   output size. Runs in O(n) time.
 fromVector :: (TensorScalar a, Shape s) => Vector a -> Tensor s a
+
+-- | Converts a tensor to a storable vector. Runs in O(n) time.
 toVector :: (TensorScalar a, Shape s) => Tensor s a -> Vector a
-elementwiseMax :: (Shape s, TensorScalar a) => Tensor s a -> Tensor s a -> Tensor s a
+
+-- | Concatenates two 1-dimensional tensors. Inverse of tsplit. Runs in
+--   O(n+m) time.
 tconcat :: (KnownNat n, KnownNat m, KnownNat (n + m), TensorScalar a) => Tensor '[n] a -> Tensor '[m] a -> Tensor '[n + m] a
+
+-- | Splits a 1-dimensional tensor into 2 parts. Inverse of tconcat. Runs
+--   in O(n+m) time.
 tsplit :: (KnownNat n, KnownNat m, TensorScalar a) => Tensor '[n + m] a -> (Tensor '[n] a, Tensor '[m] a)
+
+-- | Computes the elementwise maximum of 2 tensors.
+elementwiseMax :: (Shape s, TensorScalar a) => Tensor s a -> Tensor s a -> Tensor s a
 instance Generic (STensor a)
 instance Datatype D1STensor
 instance Constructor C1_0STensor
