@@ -60,9 +60,9 @@
 <a name="line-51"></a><span class='hs-keyword'>import</span> <span class='hs-keyword'>qualified</span> <span class='hs-conid'>Foreign</span><span class='hs-varop'>.</span><span class='hs-conid'>CUDA</span><span class='hs-varop'>.</span><span class='hs-conid'>CuDNN</span> <span class='hs-keyword'>as</span> <span class='hs-conid'>CuDNN</span>
 <a name="line-52"></a><span class='hs-keyword'>import</span> <span class='hs-keyword'>qualified</span> <span class='hs-conid'>Foreign</span><span class='hs-varop'>.</span><span class='hs-conid'>CUDA</span><span class='hs-varop'>.</span><span class='hs-conid'>Cublas</span> <span class='hs-keyword'>as</span> <span class='hs-conid'>CuBlas</span>
 <a name="line-53"></a>
-<a name="line-54"></a><a name="Tensor"></a><span class='hs-comment'>-- | An immutable, GPU tensor with a given shape, whose scalars should be instances of</span>
-<a name="line-55"></a><a name="Tensor"></a><span class='hs-comment'>-- 'TensorScalar'. Such tensors are instances of 'Num', 'Fractional' and 'Floating',</span>
-<a name="line-56"></a><a name="Tensor"></a><span class='hs-comment'>-- implementing all the numeric operations in an elementwise fashion:</span>
+<a name="line-54"></a><a name="Tensor"></a><span class='hs-comment'>-- | An immutable, GPU tensor with a given shape 's', whose scalar type 'a' should be</span>
+<a name="line-55"></a><a name="Tensor"></a><span class='hs-comment'>-- an instance of 'TensorScalar'. Such tensors are instances of 'Num', 'Fractional' and</span>
+<a name="line-56"></a><a name="Tensor"></a><span class='hs-comment'>-- 'Floating', implementing all the numeric operations in an elementwise fashion:</span>
 <a name="line-57"></a><a name="Tensor"></a><span class='hs-comment'>--</span>
 <a name="line-58"></a><a name="Tensor"></a><span class='hs-comment'>-- &gt;&gt;&gt; fromList [1,2,3] + fromList [3,4,5] :: Tensor '[3] CFloat</span>
 <a name="line-59"></a><a name="Tensor"></a><span class='hs-comment'>-- Tensor [3] [4.0,6.0,8.0]</span>
@@ -118,7 +118,7 @@
 <a name="line-109"></a><span class='hs-definition'>ones</span> <span class='hs-keyglyph'>=</span> <span class='hs-varid'>unsafePerformIO</span> <span class='hs-varop'>$</span> <span class='hs-conid'>MT</span><span class='hs-varop'>.</span><span class='hs-varid'>ones</span> <span class='hs-varop'>&gt;&gt;=</span> <span class='hs-varid'>unsafeFreeze</span>
 <a name="line-110"></a>
 <a name="line-111"></a><a name="fromList"></a><span class='hs-comment'>-- | Initializes a tensor from list data. If the length of the list does not correspond</span>
-<a name="line-112"></a><span class='hs-comment'>-- to the size of the desired shapes, throws an exception at run time.</span>
+<a name="line-112"></a><span class='hs-comment'>-- to the size of the desired shape, throws an exception at run time.</span>
 <a name="line-113"></a><span class='hs-definition'>fromList</span> <span class='hs-keyglyph'>::</span> <span class='hs-layout'>(</span><span class='hs-conid'>TensorScalar</span> <span class='hs-varid'>a</span><span class='hs-layout'>,</span> <span class='hs-conid'>Shape</span> <span class='hs-varid'>s</span><span class='hs-layout'>)</span> <span class='hs-keyglyph'>=&gt;</span> <span class='hs-keyglyph'>[</span><span class='hs-varid'>a</span><span class='hs-keyglyph'>]</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-conid'>Tensor</span> <span class='hs-varid'>s</span> <span class='hs-varid'>a</span>
 <a name="line-114"></a><span class='hs-definition'>fromList</span> <span class='hs-varid'>value</span> <span class='hs-keyglyph'>=</span> <span class='hs-varid'>unsafePerformIO</span> <span class='hs-varop'>$</span> <span class='hs-conid'>MT</span><span class='hs-varop'>.</span><span class='hs-varid'>fromList</span> <span class='hs-varid'>value</span> <span class='hs-varop'>&gt;&gt;=</span> <span class='hs-varid'>unsafeFreeze</span>
 <a name="line-115"></a>

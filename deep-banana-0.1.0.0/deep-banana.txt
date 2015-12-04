@@ -312,10 +312,11 @@ instance (AdditiveGroup (HLSpace a w), Monad m) => Category (Layer m a w)
 -- | GPU multi-dimensional dense numeric arrays.
 module DeepBanana.Tensor
 
--- | An immutable, GPU tensor with a given shape, whose scalars should be
---   instances of <a>TensorScalar</a>. Such tensors are instances of
---   <a>Num</a>, <a>Fractional</a> and <a>Floating</a>, implementing all
---   the numeric operations in an elementwise fashion:
+-- | An immutable, GPU tensor with a given shape <tt>s</tt>, whose scalar
+--   type <tt>a</tt> should be an instance of <a>TensorScalar</a>. Such
+--   tensors are instances of <a>Num</a>, <a>Fractional</a> and
+--   <a>Floating</a>, implementing all the numeric operations in an
+--   elementwise fashion:
 --   
 --   <pre>
 --   &gt;&gt;&gt; fromList [1,2,3] + fromList [3,4,5] :: Tensor '[3] CFloat
@@ -348,7 +349,7 @@ unsafeFreeze :: PrimMonad m => MTensor (PrimState m) s a -> m (Tensor s a)
 unsafeThaw :: PrimMonad m => Tensor s a -> m (MTensor (PrimState m) s a)
 
 -- | Initializes a tensor from list data. If the length of the list does
---   not correspond to the size of the desired shapes, throws an exception
+--   not correspond to the size of the desired shape, throws an exception
 --   at run time.
 fromList :: (TensorScalar a, Shape s) => [a] -> Tensor s a
 
