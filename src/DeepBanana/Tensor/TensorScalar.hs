@@ -1,4 +1,9 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-|
+Defines datatype which can be used as scalar elements for a tensor. Also exports much
+needed, although orphan instances for 'CFloat' and 'CDouble': 'Generic', 'NFData' and
+'Serialize'.
+-}
 module DeepBanana.Tensor.TensorScalar (
     TensorScalar(..)
   , CFloat, CDouble
@@ -33,10 +38,14 @@ instance Serialize CDouble
 instance NFData CFloat
 instance NFData CDouble
 
+-- | Type class for tensor scalars. Basically requires them to be storable, serializable,
+-- deepseqable numbers that can be handled by CUDA, Cublas, CuDNN and Haskell. Basically
+-- requires low-level numeric routines.
 class (Cublas.Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, Serialize a, NFData a)
       => TensorScalar a where
+  -- | The corresponding CuDNN datatype.
   datatype :: Proxy a -> CuDNN.DataType
-  -- ad-hoc stuff to cleanly wrap low-level C APIs
+  -- | Low-level in-place numeric operations.
   thresh :: CUDA.DevicePtr a -> CSize -> a -> CUDA.DevicePtr a -> IO ()
   rawMul :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
   rawAdd :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
@@ -63,7 +72,7 @@ class (Cublas.Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, Ser
   rawAtanh :: CUDA.DevicePtr a -> CSize -> IO ()
   rawPow :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
   rawMax :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
-  -- curand stuff
+  -- | Low-level CuRAND bindings.
   generateUniform :: CuRAND.Generator
                   -> CUDA.DevicePtr a
                   -> CSize

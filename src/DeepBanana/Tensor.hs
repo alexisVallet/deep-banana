@@ -1,20 +1,28 @@
 {-# LANGUAGE DeriveGeneric, UndecidableInstances #-}
+{-|
+GPU multi-dimensional dense numeric arrays.
+-}
 module DeepBanana.Tensor (
     module DeepBanana.Tensor.Shape
   , module DeepBanana.Tensor.TensorScalar
   , module Data.VectorSpace
-  , dtype
   , Tensor(..)
+  -- * Basic manipulations
+  , dtype
   , reshape
+  -- * Converting from/to mutable tensors
   , unsafeFreeze
   , unsafeThaw
+  -- * Converting from/to lists
   , fromList
   , toList
+  -- * Converting from/to storable vectors
   , fromVector
   , toVector
-  , elementwiseMax
+  -- * Utilities
   , tconcat
   , tsplit
+  , elementwiseMax
   ) where
 import Foreign
 import Foreign.C
@@ -30,6 +38,7 @@ import Data.Traversable
 import GHC.Generics
 import GHC.TypeLits
 import Data.Serialize
+import Control.Monad
 import Control.DeepSeq
 import Data.Ratio
 import Unsafe.Coerce
@@ -42,6 +51,17 @@ import qualified Foreign.CUDA as CUDA
 import qualified Foreign.CUDA.CuDNN as CuDNN
 import qualified Foreign.CUDA.Cublas as CuBlas
 
+-- | An immutable, GPU tensor with a given shape 's', whose scalar type 'a' should be
+-- an instance of 'TensorScalar'. Such tensors are instances of 'Num', 'Fractional' and
+-- 'Floating', implementing all the numeric operations in an elementwise fashion:
+--
+-- >>> fromList [1,2,3] + fromList [3,4,5] :: Tensor '[3] CFloat
+-- Tensor [3] [4.0,6.0,8.0]
+--
+-- Scalars are automatically broadcast to whatever shape is necessary:
+--
+-- >>> 5 * fromList [1,2,3] :: Tensor '[3] CFloat
+-- Tensor [3] [5.0,10.0,15.0]
 data Tensor (s :: [Nat]) a = Tensor (ForeignPtr a)
 
 data STensor a = STensor [a]
@@ -60,41 +80,59 @@ instance (NFData a, Generic a, TensorScalar a) => NFData (Tensor s a)
 instance forall s a . (Shape s, TensorScalar a, Show a) => Show (Tensor s a) where
   show t = "Tensor " ++ show (shape (Proxy :: Proxy s)) ++ " "  ++ show (take 10 $ toList t)
 
+-- | Type safe reshaping.
 reshape :: (Shape s1, Shape s2, Size s1 ~ Size s2) => Tensor s1 a -> Tensor s2 a
 reshape = unsafeCoerce
 
+-- | Returns the CuDNN datatype of a tensor.
 dtype :: forall s a . (TensorScalar a) => Tensor s a -> CuDNN.DataType
 dtype _ = datatype (Proxy :: Proxy a)
 
--- mutable/unmutable conversions
+-- | Converts a mutable tensor into an immutable one in O(1) time. The data is not
+-- copied, so one should make sure the input mutable tensor is not modified after the
+-- the conversion. Unsafe.
 unsafeFreeze :: (PrimMonad m) => MTensor (PrimState m) s a -> m (Tensor s a)
 unsafeFreeze (MTensor ptr) = return $ Tensor ptr
 
+-- | Converts an immutable tensor into a mutable one in O(1) time. The data is not
+-- copied, so one should make sure the input immutable tensor is not used after the
+-- conversion. Unsafe.
 unsafeThaw :: (PrimMonad m) => Tensor s a -> m (MTensor (PrimState m) s a)
 unsafeThaw (Tensor ptr) = return $ MTensor ptr
 
+-- | Initializes a tensor with all zeros.
 zeros :: forall s a . (Shape s, TensorScalar a) => Tensor s a
 zeros = unsafePerformIO $ MT.zeros >>= unsafeFreeze
 
+-- | Initializes a tensor with all ones.
 ones :: forall s a . (Shape s, TensorScalar a) => Tensor s a
 ones = unsafePerformIO $ MT.ones >>= unsafeFreeze
 
--- conversion to/from lists
+-- | Initializes a tensor from list data. If the length of the list does not correspond
+-- to the size of the desired shape, throws an exception at run time.
 fromList :: (TensorScalar a, Shape s) => [a] -> Tensor s a
 fromList value = unsafePerformIO $ MT.fromList value >>= unsafeFreeze
 
+-- | Converts a tensor to a list.
 toList :: (TensorScalar a, Shape s) => Tensor s a -> [a]
 toList t = unsafePerformIO $ unsafeThaw t >>= MT.toList
 
--- conversion to/from storable based vectors
+-- | Converts a storable vector to an immutable tensor. Throws an error at runtime
+-- when the input's length does not correspond to the desired output size. Runs in
+-- O(n) time.
 fromVector :: forall s a . (TensorScalar a, Shape s) => SV.Vector a -> Tensor s a
 fromVector value = unsafePerformIO $ do
+  when (SV.length value /= size (Proxy :: Proxy s))
+    $ error $ "fromVector: Incompatible sizes\n\tinput vector: "
+    ++ show (SV.length value) ++ "\n\trequired output shape: "
+    ++ show (shape (Proxy :: Proxy s)) ++ ", size " ++ show (size (Proxy :: Proxy s))
   res <- MT.emptyTensor
   SV.unsafeWith value $ \vptr -> do
     MT.withDevicePtr res $ \resptr -> do
       CUDA.pokeArray (size (Proxy :: Proxy s)) vptr resptr
   unsafeFreeze res
 
+-- | Converts a tensor to a storable vector. Runs in O(n) time.
 toVector :: forall a s . (TensorScalar a, Shape s) => Tensor s a -> SV.Vector a
 toVector t = unsafePerformIO $ do
   res <- SMV.new $ size (Proxy :: Proxy s)
@@ -104,7 +142,7 @@ toVector t = unsafePerformIO $ do
       CUDA.peekArray (size (Proxy :: Proxy s)) mtptr resptr
   SV.unsafeFreeze res
 
--- Vector concatenation and splitting
+-- | Concatenates two 1-dimensional tensors. Inverse of tsplit. Runs in O(n+m) time.
 tconcat :: forall n m a . (KnownNat n, KnownNat m, KnownNat (n + m), TensorScalar a)
        => Tensor '[n] a -> Tensor '[m] a -> Tensor '[n + m] a
 tconcat t1 t2 = unsafePerformIO $ do
@@ -124,6 +162,7 @@ tconcat t1 t2 = unsafePerformIO $ do
            (sizeOf (undefined :: a) * fromIntegral t1sz))
   unsafeFreeze out
 
+-- | Splits a 1-dimensional tensor into 2 parts. Inverse of tconcat. Runs in O(n+m) time.
 tsplit :: forall n m a . (KnownNat n, KnownNat m, TensorScalar a)
       => Tensor '[n + m] a -> (Tensor '[n] a, Tensor '[m] a)
 tsplit t = unsafePerformIO $ do
@@ -188,6 +227,7 @@ instance (Shape s, TensorScalar a) => Fractional (Tensor s a) where
     unsafeFreeze res
   fromRational r = fromInteger (numerator r) / fromInteger (denominator r)
 
+-- | Computes the elementwise maximum of 2 tensors.
 elementwiseMax :: forall s a . (Shape s, TensorScalar a)
                => Tensor s a -> Tensor s a -> Tensor s a
 elementwiseMax x y = unsafePerformIO $ do

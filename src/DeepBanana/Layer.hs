@@ -1,3 +1,6 @@
+{-|
+Compositional layers which learn a set of weights through backpropagation.
+-}
 module DeepBanana.Layer (
     module Control.Category
   , Layer(..)
@@ -25,25 +28,39 @@ import Data.Proxy
 import Data.Serialize
 import Control.DeepSeq
 
--- Represents a computation from a to b that is differentiable with regards to a.
--- The inner computation can take place in a monad, for instance for random number
--- generation.
--- A weight layer, as per common usage, has a distinguished set of weights.
+-- | A layer 'Layer m a w inp out' is a differentiable computation taking an input of
+-- type 'inp' alongside a list of weights 'w' to produce an output of type 'out' within
+-- some monad 'm'. Inputs and weights should be vector spaces whose scalar type is 'a'.
+--
+-- The need for the computation to be in a monad 'm' arises from layers such as dropout
+-- which depend on some random number computation. Crucially, the datatype ensures all
+-- effects take place only during the forward pass, and that no additional effect take
+-- place during the backward pass.
+--
+-- Layers form a category in 2 separate and useful ways:
+-- * One where the parameter 'w' must be identical for all composed layers, meaning they
+--   all share the same weights. This leads directly to recurrent neural networks, and
+--   happens through the standard instance from "Control.Category".
+-- * One where the weight list parameters get concatenated. This leads to feed-forward
+--   neural networks, and happens through the '>+>' operator.
 newtype Layer m a (w :: [*]) inp out = Layer {
   forwardBackward :: HLSpace a w -> inp -> m (out, out -> (HLSpace a w, inp))
   }
 
+-- | Runs the forward pass of a layer.
 forward :: (Monad m) => Layer m a w inp out -> HLSpace a w -> inp -> m out
 forward l w inp = do
   (out, _) <- forwardBackward l w inp
   return out
 
+-- | Runs the backward pass of a layer.
 backward :: (Monad m)
          => Layer m a w inp out -> HLSpace a w -> inp -> out -> m (HLSpace a w, inp)
 backward l w inp upgrad = do
   (out, bwd) <- forwardBackward l w inp
   return $ bwd upgrad
 
+-- | Creates a layer from separate forward pass and backward pass computations.
 combinePasses :: (Monad m)
               => (HLSpace a w -> inp -> m out)
               -> (HLSpace a w -> inp -> out -> m (out -> (HLSpace a w, inp)))
