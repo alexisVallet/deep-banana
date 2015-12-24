@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric, UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 {-|
 GPU multi-dimensional dense numeric arrays.
 -}
@@ -10,6 +11,7 @@ module DeepBanana.Tensor (
   -- * Basic manipulations
   , dtype
   , reshape
+  , broadcast
   -- * Converting from/to mutable tensors
   , unsafeFreeze
   , unsafeThaw
@@ -23,6 +25,7 @@ module DeepBanana.Tensor (
   , tconcat
   , tsplit
   , elementwiseMax
+  , flatten
   ) where
 import Foreign
 import Foreign.C
@@ -75,10 +78,11 @@ instance (Shape s, Generic a, TensorScalar a) => Generic (Tensor s a) where
 
 instance (Shape s, Serialize a, Generic a, TensorScalar a) => Serialize (Tensor s a)
 
-instance (NFData a, Generic a, TensorScalar a) => NFData (Tensor s a)
+instance (Shape s, NFData a, Generic a, TensorScalar a) => NFData (Tensor s a)
 
 instance forall s a . (Shape s, TensorScalar a, Show a) => Show (Tensor s a) where
-  show t = "Tensor " ++ show (shape (Proxy :: Proxy s)) ++ " "  ++ show (take 10 $ toList t)
+  show t = "Tensor " ++ show  (dimensions (Proxy :: Proxy s))
+           ++ " "  ++ show (take 10 $ toList t)
 
 -- | Type safe reshaping.
 reshape :: (Shape s1, Shape s2, Size s1 ~ Size s2) => Tensor s1 a -> Tensor s2 a
@@ -125,7 +129,8 @@ fromVector value = unsafePerformIO $ do
   when (SV.length value /= size (Proxy :: Proxy s))
     $ error $ "fromVector: Incompatible sizes\n\tinput vector: "
     ++ show (SV.length value) ++ "\n\trequired output shape: "
-    ++ show (shape (Proxy :: Proxy s)) ++ ", size " ++ show (size (Proxy :: Proxy s))
+    ++ show (dimensions (Proxy :: Proxy s))
+    ++ ", size " ++ show (size (Proxy :: Proxy s))
   res <- MT.emptyTensor
   SV.unsafeWith value $ \vptr -> do
     MT.withDevicePtr res $ \resptr -> do
@@ -182,6 +187,31 @@ tsplit t = unsafePerformIO $ do
               (sizeOf (undefined :: a) * fromIntegral t1sz)
         CUDA.copyArray t2sz offsetPtr t2ptr
   pure (,) <*> unsafeFreeze mt1 <*> unsafeFreeze mt2
+
+-- | Flattens a tensor into a 1-dimensional vector.
+flatten :: (Shape s, 1 <= Size s, KnownNat (Size s)) => Tensor s a -> Tensor '[Size s] a
+flatten = reshape
+
+-- | Type-safe broadcasting.
+broadcast :: forall s1 s2 a
+          . (TensorScalar a, Shape s1, Shape s2, Broadcast s1 s2)
+          => Tensor s1 a -> Tensor s2 a
+broadcast inp = unsafePerformIO $ do
+  let inp_shape =
+        fmap fromIntegral
+        $ take (size (Proxy :: Proxy s2) - size (Proxy :: Proxy s1)) (repeat 1)
+        ++ dimensions (Proxy :: Proxy s1)
+      out_shape = fmap fromIntegral $ dimensions (Proxy :: Proxy s2)
+      out_size = fromIntegral $ size (Proxy :: Proxy s2)
+      out_nbdim = fromIntegral $ nbdim (Proxy :: Proxy s2)
+  minp <- unsafeThaw inp
+  mout <- MT.emptyTensor
+  MT.withDevicePtr minp $ \inpptr -> do
+    MT.withDevicePtr mout $ \outptr -> do
+      CUDA.withListArray inp_shape $ \inp_shapeptr -> do
+        CUDA.withListArray out_shape $ \out_shapeptr -> do
+          broadcast_copy out_nbdim out_size inpptr inp_shapeptr outptr out_shapeptr
+  unsafeFreeze mout
 
 instance forall a s . (TensorScalar a, Shape s) => Num (Tensor s a) where
   t1 + t2 = unsafePerformIO $ do

@@ -167,3 +167,9 @@ foreign import ccall "tmax"
 
 foreign import ccall "tmaxDouble"
   tmaxDouble :: DevicePtr CDouble -> DevicePtr CDouble -> CSize -> IO ()
+
+foreign import ccall "broadcast_copy"
+  broadcast_copy :: CInt -> CSize -> DevicePtr CFloat -> DevicePtr CInt -> DevicePtr CFloat -> DevicePtr CInt -> IO ()
+
+foreign import ccall "broadcast_copyDouble"
+  broadcast_copyDouble :: CInt -> CSize -> DevicePtr CDouble -> DevicePtr CInt -> DevicePtr CDouble -> DevicePtr CInt -> IO ()

@@ -1,5 +1,7 @@
+{-# LANGUAGE TypeFamilies #-}
 module DeepBanana.Layer.CUDA.Cublas (
-    linear
+    dot
+  , linear
   , sumCols
   , sumRows
   , replicateAsRows
@@ -21,10 +23,10 @@ import DeepBanana.Layer
 import DeepBanana.Layer.CUDA.Monad
 
 -- linear layer
-linear :: (TensorScalar a, KnownNat m, KnownNat n, KnownNat k)
-       => Layer CUDA a '[Tensor [m,k] a] (Tensor [n,m] a) (Tensor [n,k] a)
-linear = combinePasses fwdlinear bwdlinear
-  where fwdlinear (HLS (HCons w HNil)) x = do
+dot :: (TensorScalar a, KnownNat m, KnownNat n, KnownNat k)
+    => Layer CUDA a '[] (Tensor [n,m] a,Tensor [m,k] a) (Tensor [n,k] a)
+dot = combinePasses' fwddot bwddot
+  where fwddot (x,w) = do
           handle <- asks cublasHandle
           return $ runST $ do
             mw <- unsafeThaw w
@@ -32,7 +34,7 @@ linear = combinePasses fwdlinear bwdlinear
             out <- MT.emptyTensor
             gemmFwd handle Cublas.N Cublas.N 1 mx mw 0 out
             unsafeFreeze out
-        bwdlinear (HLS (HCons w HNil)) x _ = do
+        bwddot (x,w) _ = do
           handle <- asks cublasHandle
           return $ \upgrad -> runST $ do
             mw <- unsafeThaw w
@@ -44,7 +46,14 @@ linear = combinePasses fwdlinear bwdlinear
             gemmBwdB handle Cublas.N Cublas.N 1 mx mupgrad mw'
             x' <- unsafeFreeze mx'
             w' <- unsafeFreeze mw'
-            return (HLS $ w' `HCons` HNil, x')
+            return (x', w')
+
+linear :: (TensorScalar a, KnownNat m, KnownNat n, KnownNat k)
+       => Layer CUDA a '[Tensor [m,k] a] (Tensor [n,m] a) (Tensor [n,k] a)
+linear = Layer $ \(HLS (HCons w HNil)) x -> do
+  (y, bwd) <- forwardBackward dot (HLS HNil) (x,w)
+  return (y, \y' -> let (_, (x',w')) = bwd y'
+                    in (HLS $ HCons w' HNil, x'))
 
 -- matrix sum reductions
 sumCols :: forall a n m . (TensorScalar a, KnownNat n, KnownNat m)
@@ -152,9 +161,9 @@ gemmFwd handle transa transb alpha a b beta c = unsafePrimToPrim $ do
   -- Figuring out the parameters to pass GEMM so it does
   -- the right thing in row-major layout, depending on the
   -- user requested transforms.
-  let [ra, ca] = shape (Proxy :: Proxy [ra,ca])
-      [rb, cb] = shape (Proxy :: Proxy [rb,cb])
-      [rc, cc] = shape (Proxy :: Proxy [rc,cc])
+  let [ra, ca] = dimensions (Proxy :: Proxy [ra,ca])
+      [rb, cb] = dimensions (Proxy :: Proxy [rb,cb])
+      [rc, cc] = dimensions (Proxy :: Proxy [rc,cc])
   -- The rules for m, n and k were derived on paper
   -- by considering all 4 possible cases, taking into
   -- account that due to layout differences gemm will

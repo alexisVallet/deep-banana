@@ -7,3 +7,6 @@
 [submodule "doc"]
 	path = doc
 	url = git@github.com:alexisVallet/deep-banana.git
+[submodule "cublas"]
+	path = cublas
+	url = git@github.com:alexisVallet/cublas.git

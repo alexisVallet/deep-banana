@@ -1,10 +1,17 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 {-| Shape type class and instances. Defines the shape of a tensor, both at the type level and value level.
 -}
 module DeepBanana.Tensor.Shape (
   -- * Shape type class
   -- $shape
     Shape(..)
+  , Size
+  , Nbdim
+  -- * Broadcasting
+  -- $broadcasting
+  , BroadcastPred
+  , Broadcast
   -- * Type-level arithmetic utilities
   -- $typearith
   , Quotient
@@ -14,61 +21,86 @@ module DeepBanana.Tensor.Shape (
 
 import GHC.TypeLits
 import Data.Proxy
+import Data.HList.HList
+import Control.Monad
+import Control.Monad.Except
 
 {- $shape
-The 'Shape' type class can only be implemented by types of kind '[Nat]'. These fully
+The 'Shape' type class can only be implemented by types of kind '[Dim Nat]'. These fully
 define the shape of a given tensor at the type level. Further, 'Shape' also requires its
 instances to have size and number of dimension information available, both at the type
 level and the value level. These informations are used to ensure at compile time that
 most operations on tensor are correctly applied.
-
-It also means that currently, we cannot handle tensors with (even partially) dynamic
-shapes. Although this is rarely an issue when training a neural network - which mostly
-expect inputs of a given size - 2d convolution layers are sometimes applied to inputs
-of varying width and height at test time. This should be adressed in a future release.
 -}
+
+-- | The size, i.e. the total number of elements of a tensor of shape s, at the type
+--   level. By convention, we set the empty type-level list to size 0.
+type family Size (s :: [Nat]) where
+  Size '[] = 0
+  Size '[n] = n
+  Size (n ': l) = n * Size l
+
+-- | The number of dimensions of a tensor of shape s. Nothing if it is unknown at
+-- compile time. For instance:
+--
+-- @
+--   Nbdim '[] ~ 0
+--   Nbdim '[ 'D 5] ~ 1
+--   Nbdim '[ 'D 6, 'D 8] ~ 2
+--   Nbdim '[ 'Any, 'D 6] ~ 2
+-- @
+type family Nbdim (s :: [Nat]) where
+  Nbdim s = Length s
+
+type family Length (l :: [k]) where
+  Length '[] = 0
+  Length (e ': l) = 1 + Length l
 
 -- | Type class for tensor shapes.
 class Shape (s :: [Nat]) where
-  -- | The size, i.e. the total number of elements of a tensor of shape s, at the type
-  --   level. By convention, we set the empty type-level list to size 0.
-  type Size s :: Nat
-  -- | The number of dimensions of a tensor of shape s. For instance:
-  --
-  -- @
-  --   Nbdim '[] ~ 0
-  --   Nbdim '[5] ~ 1
-  --   Nbdim '[6,8] ~ 2
-  -- @
-  type Nbdim s :: Nat
   -- | Value-level shape of a tensor with type-level shape s.
-  shape :: Proxy s -> [Int]
+  dimensions :: Proxy s -> [Int]
   -- | Value-level number of dimensions of a tensor with type-level shape s.
   nbdim :: Proxy s -> Int
-  nbdim p = length $ shape p
+  nbdim rep = length $ dimensions rep
   -- | Value-level size, or number of elements of a tensor with type-level shape s. As
   --   with the type-level example, we set the empty type-level list to size 0.
   size :: Proxy s -> Int
-  size p = case shape p of
-            [] -> 0
-            xs -> product xs
+  size rep = case dimensions rep of
+              [] -> 0
+              xs -> product xs
 
 instance Shape '[] where
-  type Size '[] = 0
-  type Nbdim '[] = 0
-  shape _ = []
+  dimensions _ = []
 
-instance (KnownNat n) => Shape '[n] where
-  type Size '[n] = n
-  type Nbdim '[n] = 1
-  shape _ = [fromIntegral $ natVal (Proxy :: Proxy n)]
+instance forall l n . (Shape l, KnownNat n) => Shape (n ': l) where
+  dimensions _ =
+    fromIntegral (natVal (Proxy :: Proxy n)) : dimensions (Proxy :: Proxy l)
 
-instance forall (e1 :: Nat) (e2 :: Nat) (l :: [Nat])
-         . (KnownNat e1, Shape (e2 ': l))
-         => Shape (e1 ': (e2 ': l)) where
-  type Size (e1 ': (e2 ': l)) = e1 * Size (e2 ': l)
-  type Nbdim (e1 ': (e2 ': l)) = 1 + Nbdim (e2 ': l)
-  shape _ = (fromIntegral $ natVal (Proxy :: Proxy e1)) : shape (Proxy :: Proxy (e2 ': l))
+{- $broadcasting
+Rules are identical to numpy's broadcasting. Assuming 2 shapes 's1' and 's2' have the
+same number of dimensions, 's1' broadcasts to 's2' if and only if each dimension
+that differs between 's1' and 's2' is 1 in 's1'. If 's1' has fewer dimensions than
+'s2', we append 1-sized dimensions so it is.
+-}
+
+type family BroadcastPred' s1 s2 where
+  BroadcastPred' '[] '[] = 'True
+  BroadcastPred' (1 ': l1) (n ': l2) = BroadcastPred' l1 l2
+  BroadcastPred' (n ': l1) (n ': l2) = BroadcastPred' l1 l2
+  BroadcastPred' s1 s2 = 'False
+
+type family PadOnes s n where
+  PadOnes s 0 = s
+  PadOnes s n = 1 ': PadOnes s (n - 1)
+
+-- | Broadcasting as a predicate. Returns ''True' iff 's1' may be broadcasted to 's2'.
+type family BroadcastPred s1 s2 where
+  BroadcastPred s1 s2 = BroadcastPred' (PadOnes s1 (Nbdim s2 - Nbdim s1)) s2
+
+-- | Broadcasting as a type class.
+class Broadcast (s1 :: [Nat]) (s2 :: [Nat])
+instance (BroadcastPred s1 s2 ~ 'True) => Broadcast s1 s2
 
 {- $typearith
 Some helper type families to compute mathematical operation in addition to the

@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 module DeepBanana.Layer.CUDA.CuRAND (
     dropout
   , uniform

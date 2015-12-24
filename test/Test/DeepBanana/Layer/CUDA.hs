@@ -139,7 +139,7 @@ naive_softmax :: forall m n
               . (KnownNat n, KnownNat m) => Tensor [n,m] CFloat -> Tensor [n,m] CFloat
 naive_softmax t = fromList $ concat $ fmap softmaxLine $ splitEvery m $ toList t
   where
-    [n,m] = shape (Proxy :: Proxy [n,m])
+    [n,m] = dimensions (Proxy :: Proxy [n,m])
     softmaxLine xs = let denom = sum $ fmap exp xs in
                       fmap (\x -> exp x / denom) xs
 
@@ -147,7 +147,7 @@ naive_mlrCost :: forall m n . (KnownNat n, KnownNat m)
               => Tensor [n,m] CFloat -> Tensor [n,m] CFloat -> CFloat
 naive_mlrCost l x =
   let softmaxed = naive_softmax x
-      [n,m] = shape (Proxy :: Proxy [n,m])
+      [n,m] = dimensions (Proxy :: Proxy [n,m])
       labels = toList l
   in
    (-1/fromIntegral n)
@@ -206,7 +206,7 @@ test_mlrCost = describe "DeepBanana.Layer.CUDA.mlrCost" $ do
       x = fromList [1..8*8] :: Tensor [8,8] (CFloat)
       expected = naive_mlrCost labels x
   it "returns the same results as a naive CPU implementation" $ do
-    (runCUDA 42 $ forward mlrCost (HLS HNil) (labels,x))
+    (runCUDA 42 $ forward (mlrCost >+> toScalar) (HLS HNil) (labels,x))
       `shouldReturn` expected
   it "has an analytic gradient close to the numeric gradient" $ do
     check_backward mlrCost (return $ HLS HNil) (return (labels,x)) (return 1)

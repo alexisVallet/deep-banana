@@ -49,7 +49,10 @@ type VanillaT s = ReaderT (VanillaReader s)
 runVanilla learningRate action =
   runReaderT action (VanillaReader learningRate)
 
-vanilla :: (VectorSpace w, Monad m) => Scalar w -> w -> w -> VanillaT (Scalar w) m w
+vanilla :: (VectorSpace w, Monad m,
+            MonadReader (VanillaReader (Scalar w))
+            (ReaderT (VanillaReader (Scalar w)) m))
+        => Scalar w -> w -> w -> VanillaT (Scalar w) m w
 vanilla cost grad w_t = do
   lr <- asks vLearningRate
   return $ w_t ^-^ lr *^ grad
@@ -67,7 +70,8 @@ data MomentumReader s = MomentumReader {
 
 type MomentumT w s = RWST (MomentumReader s) () (MomentumState w)
 
-runMomentum :: (VectorSpace w, Monad m) => Scalar w -> Scalar w -> MomentumT w (Scalar w) m a -> m a
+runMomentum :: (VectorSpace w, Monad m)
+            => Scalar w -> Scalar w -> MomentumT w (Scalar w) m a -> m a
 runMomentum learningRate momentumFactor action = do
   (x,_,_) <- runRWST
              action
@@ -75,7 +79,10 @@ runMomentum learningRate momentumFactor action = do
              (MomentumState zeroV)
   return x
 
-momentum :: (VectorSpace w, Monad m) => Scalar w -> w -> w -> MomentumT w (Scalar w) m w
+momentum :: (VectorSpace w, Monad m,
+             MonadReader (MomentumReader (Scalar w))
+             (RWST (MomentumReader (Scalar w)) () (MomentumState w) m))
+         => Scalar w -> w -> w -> MomentumT w (Scalar w) m w
 momentum cost grad w_t = do
   lr <- asks mLearningRate
   mf <- asks mMomentumFactor

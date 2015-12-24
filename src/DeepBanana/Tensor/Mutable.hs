@@ -1,4 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 {-|
 Mutable GPU multi-dimensional dense numeric arrays, parametrized by the state token of
 some primitive state monad.
@@ -157,4 +158,4 @@ inv tensor = unsafePrimToPrim $ do
 -- | Type-safe tensor reshaping.
 reshape :: (Shape s1, Shape s2, Size s1 ~ Size s2)
         => MTensor st s1 a -> MTensor st s2 a
-reshape = unsafeCoerce
+reshape (MTensor dataptr) = MTensor dataptr

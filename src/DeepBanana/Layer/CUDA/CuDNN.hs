@@ -1,4 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 module DeepBanana.Layer.CUDA.CuDNN (
     convolution2d
   , CuDNN.convolution_fwd_algo_implicit_gemm
@@ -185,7 +186,7 @@ withTensor4d :: forall a b s . (TensorScalar a, Shape s, Nbdim s ~ 4)
              -> IO b
 withTensor4d tensor action = do
   datatype <- MT.dtype tensor
-  let [n,c,h,w] = fmap fromIntegral $ shape (Proxy :: Proxy s)
+  let [n,c,h,w] = fmap fromIntegral $ dimensions (Proxy :: Proxy s)
   withDescriptor
     "tensor"
     CuDNN.createTensorDescriptor
@@ -199,7 +200,7 @@ withFilter4d :: forall a b s . (TensorScalar a, Shape s, Nbdim s ~ 4)
              -> IO b
 withFilter4d tensor action = do
   datatype <- MT.dtype tensor
-  let [n,c,h,w] = fmap fromIntegral $ shape (Proxy :: Proxy s)
+  let [n,c,h,w] = fmap fromIntegral $ dimensions (Proxy :: Proxy s)
   withDescriptor
     "filter"
     CuDNN.createFilterDescriptor
@@ -241,8 +242,8 @@ convolution2dFwd :: forall input_shape filter_shape padding stride out_shape m a
                  -> m (MTensor (PrimState m) out_shape a)
 convolution2dFwd p handle algo fmaps filters = unsafePrimToPrim $ do
   -- Getting padding and stride into the value-level realm.
-  let [padh,padw] = shape (Proxy :: Proxy padding)
-      [strh,strw] = shape (Proxy :: Proxy stride)
+  let [padh,padw] = dimensions (Proxy :: Proxy padding)
+      [strh,strw] = dimensions (Proxy :: Proxy stride)
   -- make the descriptors
   let runConv = withConvDesc (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
         withTensor4d (unsafeCoerce fmaps :: IOTensor input_shape a)
@@ -269,7 +270,7 @@ convolution2dFwd p handle algo fmaps filters = unsafePrimToPrim $ do
                     outputptr
             return $ unsafeCoerce output
   runConv `catch` \e -> do
-    error $ "Exception thrown in convolution forward pass: " ++ show (e :: SomeException) ++ "\n filter shape: " ++ show (shape (Proxy :: Proxy filter_shape)) ++ ", image shape: " ++ show (shape (Proxy :: Proxy input_shape))
+    error $ "Exception thrown in convolution forward pass: " ++ show (e :: SomeException) ++ "\n filter shape: " ++ show (dimensions (Proxy :: Proxy filter_shape)) ++ ", image shape: " ++ show (dimensions (Proxy :: Proxy input_shape))
 
 convolution2dBwdFilters :: forall input_shape filter_shape padding stride out_shape m a
                          . (PrimMonad m, TensorScalar a, Shape input_shape,
@@ -286,8 +287,8 @@ convolution2dBwdFilters :: forall input_shape filter_shape padding stride out_sh
                          -> m (MTensor (PrimState m) filter_shape a)
 convolution2dBwdFilters p handle fmaps filters upgrad = unsafePrimToPrim $ do
   -- Getting padding and stride into the value-level realm.
-  let [padh,padw] = shape (Proxy :: Proxy padding)
-      [strh,strw] = shape (Proxy :: Proxy stride)
+  let [padh,padw] = dimensions (Proxy :: Proxy padding)
+      [strh,strw] = dimensions (Proxy :: Proxy stride)
   -- make the descriptors
   let runConv = withConvDesc (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
         withTensor4d (unsafeCoerce fmaps :: IOTensor input_shape a)
@@ -320,8 +321,8 @@ convolution2dBwdInputs :: forall input_shape filter_shape padding stride out_sha
                        -> m (MTensor (PrimState m) input_shape a)
 convolution2dBwdInputs p handle fmaps filters upgrad = unsafePrimToPrim $ do
   -- Getting padding and stride into the value-level realm.
-  let [padh,padw] = shape (Proxy :: Proxy padding)
-      [strh,strw] = shape (Proxy :: Proxy stride)
+  let [padh,padw] = dimensions (Proxy :: Proxy padding)
+      [strh,strw] = dimensions (Proxy :: Proxy stride)
   -- make the descriptors
   let runConv = withConvDesc (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
         withFilter4d (unsafeCoerce filters :: IOTensor filter_shape a)
@@ -409,9 +410,9 @@ pooling2dFwd :: forall input_shape pooling_size padding stride out_shape m a
            -> m (MTensor (PrimState m) out_shape a)
 pooling2dFwd p handle mode input = unsafePrimToPrim $ do
   -- pooling descriptor
-  let [cwh,cww] = fmap fromIntegral $ shape (Proxy :: Proxy pooling_size)
-      [cpadh,cpadw] = fmap fromIntegral $ shape (Proxy :: Proxy padding)
-      [cstrh,cstrw] = fmap fromIntegral $ shape (Proxy :: Proxy stride)
+  let [cwh,cww] = fmap fromIntegral $ dimensions (Proxy :: Proxy pooling_size)
+      [cpadh,cpadw] = fmap fromIntegral $ dimensions (Proxy :: Proxy padding)
+      [cstrh,cstrw] = fmap fromIntegral $ dimensions (Proxy :: Proxy stride)
   withDescriptor
     "pooling"
     CuDNN.createPoolingDescriptor
@@ -442,9 +443,9 @@ pooling2dBwd :: forall input_shape pooling_size padding stride out_shape m a
            -> m (MTensor (PrimState m) input_shape a)
 pooling2dBwd p handle mode inp out upgrad = unsafePrimToPrim $ do
   -- pooling descriptor
-  let [cwh,cww] = fmap fromIntegral $ shape (Proxy :: Proxy pooling_size)
-      [cpadh,cpadw] = fmap fromIntegral $ shape (Proxy :: Proxy padding)
-      [cstrh,cstrw] = fmap fromIntegral $ shape (Proxy :: Proxy stride)
+  let [cwh,cww] = fmap fromIntegral $ dimensions (Proxy :: Proxy pooling_size)
+      [cpadh,cpadw] = fmap fromIntegral $ dimensions (Proxy :: Proxy padding)
+      [cstrh,cstrw] = fmap fromIntegral $ dimensions (Proxy :: Proxy stride)
   withDescriptor
     "pooling"
     CuDNN.createPoolingDescriptor
@@ -534,7 +535,7 @@ transformTensorIO :: forall a s1 s2
                   -> IO (IOTensor s2 a)
 transformTensorIO handle srcf dstf src = do
   datatype <- MT.dtype src
-  let [a',b',c',d'] = shape (Proxy :: Proxy s1)
+  let [a',b',c',d'] = dimensions (Proxy :: Proxy s1)
       [n,c,h,w] = if srcf == CuDNN.nchw then [a',b',c',d']
                   else if srcf == CuDNN.nhwc then [a',d',b',c']
                        else error $ "Unsupported input format: " ++ show srcf

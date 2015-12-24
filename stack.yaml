@@ -3,12 +3,11 @@ packages:
 - '.'
 - 'hcudnn'
 - 'hcurand'
+- 'cublas'
 extra-deps:
-- cuda-0.6.6.2
-- cublas-0.2.1.0
+- cuda-0.7.0.0
 - ratio-int-0.1.2
 - friday-0.2.2.0
 - friday-devil-0.1.1.1
 - HList-0.4.1.0
-- leveldb-haskell-0.6.3
-resolver: lts-2.17
+resolver: lts-3.18

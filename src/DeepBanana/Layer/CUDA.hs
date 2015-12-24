@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 module DeepBanana.Layer.CUDA (
     module DeepBanana.Layer.CUDA.Monad
   , module DeepBanana.Layer.CUDA.CuDNN
@@ -28,7 +28,7 @@ softmax :: (TensorScalar a, KnownNat n, KnownNat m)
         => Layer CUDA a '[] (Tensor [n,m] a) (Tensor [n,m] a)
 softmax =
   lexp
-  >+> id &&& (sumRows >+> lreshape >+> replicateAsCols (Proxy :: Proxy m) >+> inv)
+  >+> id' &&& (sumRows >+> lreshape >+> replicateAsCols (Proxy :: Proxy m) >+> inv)
   >+> multiply
 
 lreshape :: (TensorScalar a, Shape s1, Shape s2, Size s1 ~ Size s2)
@@ -44,13 +44,12 @@ toScalar = noWeights $ fwdBwdToScalar
           return (head $ toList x, \upgrad -> fromList [upgrad])
 
 mlrCost :: forall a n m . (TensorScalar a, KnownNat n, KnownNat m)
-        => Layer CUDA a '[] (Tensor [n,m] a, Tensor [n,m] a) a
+        => Layer CUDA a '[] (Tensor [n,m] a, Tensor [n,m] a) (Tensor [1,1] a)
 mlrCost =
-  id *** (add -< 10E-5 >+> softmax)
+  id' *** (add -< 10E-5 >+> softmax)
   >+> multiply
   >+> sumRows
   >+> add -< 10E-5
   >+> llog
   >+> sumCols
   >+> scale -< (-1 / fromIntegral (natVal (Proxy :: Proxy n)))
-  >+> toScalar

@@ -1,4 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 {-|
 Defines datatype which can be used as scalar elements for a tensor. Also exports much
 needed, although orphan instances for 'CFloat' and 'CDouble': 'Generic', 'NFData' and
@@ -35,8 +36,6 @@ instance Generic CDouble where
 
 instance Serialize CFloat
 instance Serialize CDouble
-instance NFData CFloat
-instance NFData CDouble
 
 -- | Type class for tensor scalars. Basically requires them to be storable, serializable,
 -- deepseqable numbers that can be handled by CUDA, Cublas, CuDNN and Haskell. Basically
@@ -72,6 +71,7 @@ class (Cublas.Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, Ser
   rawAtanh :: CUDA.DevicePtr a -> CSize -> IO ()
   rawPow :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
   rawMax :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
+  broadcast_copy :: CInt -> CSize -> CUDA.DevicePtr a -> CUDA.DevicePtr CInt -> CUDA.DevicePtr a -> CUDA.DevicePtr CInt -> IO ()
   -- | Low-level CuRAND bindings.
   generateUniform :: CuRAND.Generator
                   -> CUDA.DevicePtr a
@@ -118,6 +118,7 @@ instance TensorScalar CFloat where
   rawAtanh = Cubits.tatanh
   rawPow = Cubits.tpow
   rawMax = Cubits.tmax
+  broadcast_copy = Cubits.broadcast_copy
   generateUniform = CuRAND.generateUniform
   generateNormal = CuRAND.generateNormal
   generateLogNormal = CuRAND.generateLogNormal
@@ -150,6 +151,7 @@ instance TensorScalar CDouble where
   rawAtanh = Cubits.tatanhDouble
   rawPow = Cubits.tpowDouble
   rawMax = Cubits.tmaxDouble
+  broadcast_copy = Cubits.broadcast_copyDouble
   generateUniform = CuRAND.generateUniformDouble
   generateNormal = CuRAND.generateNormalDouble
   generateLogNormal = CuRAND.generateLogNormalDouble

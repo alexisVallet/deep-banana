@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 {-|
 Compositional layers which learn a set of weights through backpropagation.
 -}
@@ -10,6 +11,7 @@ module DeepBanana.Layer (
   , backward
   , combinePasses
   , combinePasses'
+  , id'
   , (***)
   , (&&&)
   , terminal
@@ -89,27 +91,40 @@ instance forall a (w :: [*]) m . (AdditiveGroup (HLSpace a w), Monad m)
     return $ (c, \c' -> let (wgrad1,bgrad) = bwdbc c'
                             (wgrad2,agrad) = bwdab bgrad in
                         (wgrad1 ^+^ wgrad2, agrad))
+
+id' :: (Monad m) => Layer m a '[] inp inp
+id' = id
+
 infixr 4 ***
-(***) :: (Monad m, AdditiveGroup (HLSpace s w))
-      => Layer m s w a b -> Layer m s w a' b' -> Layer m s w (a,a') (b,b')
-Layer f1 *** Layer f2 = Layer $ \w (a,a') -> do
-  (b, bwd1) <- f1 w a
-  (b', bwd2) <- f2 w a'
+(***) :: forall m s w1 w2 a b a' b' n
+      . (Monad m, HAppendList w1 w2, HSplitAt n (HAppendListR w1 w2) w1 w2)
+      => Layer m s w1 a b -> Layer m s w2 a' b'
+      -> Layer m s (HAppendListR w1 w2) (a,a') (b,b')
+Layer f1 *** Layer f2 = Layer $ \w1w2 (a,a') -> do
+  let (w1,w2) = hSplitAt (Proxy :: Proxy n) $ unHLS w1w2
+  (b, bwd1) <- f1 (HLS w1) a
+  (b', bwd2) <- f2 (HLS w2) a'
   return ((b,b'), \(bgrad,bgrad') -> let (w1grad, agrad) = bwd1 bgrad
                                          (w2grad, agrad') = bwd2 bgrad'
-                                     in (w1grad ^+^ w2grad, (agrad, agrad')))
+                                     in (HLS $ hAppendList (unHLS w1grad) (unHLS w2grad),
+                                         (agrad, agrad')))
 
 infixr 4 &&&
-(&&&) :: (Monad m, AdditiveGroup (HLSpace s w), AdditiveGroup a)
-      => Layer m s w a b -> Layer m s w a b' -> Layer m s w a (b,b')
-Layer f1 &&& Layer f2 = Layer $ \w a -> do
-  (b,bwd1) <- f1 w a
-  (b',bwd2) <- f2 w a
+(&&&) :: forall m s w1 w2 a b b' n
+      . (Monad m, HAppendList w1 w2, HSplitAt n (HAppendListR w1 w2) w1 w2,
+         AdditiveGroup a)
+      => Layer m s w1 a b -> Layer m s w2 a b'
+      -> Layer m s (HAppendListR w1 w2) a (b,b')
+Layer f1 &&& Layer f2 = Layer $ \w1w2 a -> do
+  let (w1,w2) = hSplitAt (Proxy :: Proxy n) $ unHLS w1w2
+  (b,bwd1) <- f1 (HLS w1) a
+  (b',bwd2) <- f2 (HLS w2) a
   return ((b,b'), \(bgrad,bgrad') -> let (w1grad, agrad1) = bwd1 bgrad
                                          (w2grad, agrad2) = bwd2 bgrad'
-                                     in (w1grad ^+^ w2grad, agrad1 ^+^ agrad2))
+                                     in (HLS $ hAppendList (unHLS w1grad) (unHLS w2grad),
+                                         agrad1 ^+^ agrad2))
 
-terminal :: (VectorSpace inp, Monad m)
+terminal :: (AdditiveGroup inp, Monad m)
          => out -> Layer m a '[] inp out
 terminal x = noWeights $ \_ -> return (x, \_ -> zeroV)
 
@@ -143,9 +158,10 @@ effect f = noWeights $ \x -> do
   return (x, \x' -> x')
 
 infixr 4 -<
-(-<) :: (Monad m, VectorSpace i1, VectorSpace i2)
+(-<) :: forall m i1 i2 w a out
+     . (Monad m, VectorSpace i1, VectorSpace i2)
      => Layer m a w (i1,i2) out -> i1 -> Layer m a w i2 out
-nn -< inp = terminal inp &&& id >+> nn
+nn -< inp = terminal inp &&& id' >+> nn
 
 -- We store weights in heterogeneous lists internally, which get concatenated
 -- by composition.
