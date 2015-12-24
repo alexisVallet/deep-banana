@@ -1,12 +1,16 @@
 [submodule "hcurand"]
 	path = hcurand
 	url = git@github.com:alexisVallet/hcurand.git
+	branch = master
 [submodule "hcudnn"]
 	path = hcudnn
 	url = git@github.com:alexisVallet/hcudnn.git
+	branch = master
 [submodule "doc"]
 	path = doc
 	url = git@github.com:alexisVallet/deep-banana.git
+	branch = gh-pages
 [submodule "cublas"]
 	path = cublas
 	url = git@github.com:alexisVallet/cublas.git
+        branch = master
