@@ -67,6 +67,9 @@ import qualified Foreign.CUDA.Cublas as CuBlas
 -- Tensor [3] [5.0,10.0,15.0]
 data Tensor (s :: [Nat]) a = Tensor (ForeignPtr a)
 
+instance (Shape s, TensorScalar a, Eq a) => Eq (Tensor s a) where
+  t1 == t2 = toList t1 == toList t2
+
 data STensor a = STensor [a]
                deriving Generic
 
@@ -199,7 +202,7 @@ broadcast :: forall s1 s2 a
 broadcast inp = unsafePerformIO $ do
   let inp_shape =
         fmap fromIntegral
-        $ take (size (Proxy :: Proxy s2) - size (Proxy :: Proxy s1)) (repeat 1)
+        $ take (nbdim (Proxy :: Proxy s2) - nbdim (Proxy :: Proxy s1)) (repeat 1)
         ++ dimensions (Proxy :: Proxy s1)
       out_shape = fmap fromIntegral $ dimensions (Proxy :: Proxy s2)
       out_size = fromIntegral $ size (Proxy :: Proxy s2)
