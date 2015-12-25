@@ -12,6 +12,8 @@ module DeepBanana.Tensor (
   , dtype
   , reshape
   , broadcast
+  , zeros
+  , ones
   -- * Converting from/to mutable tensors
   , unsafeFreeze
   , unsafeThaw
