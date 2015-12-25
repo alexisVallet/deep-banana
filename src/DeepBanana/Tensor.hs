@@ -11,6 +11,7 @@ module DeepBanana.Tensor (
   -- * Basic manipulations
   , dtype
   , reshape
+  , dynReshape
   , broadcast
   , zeros
   , ones
@@ -33,6 +34,7 @@ import Foreign
 import Foreign.C
 import Data.Proxy
 import Control.Applicative
+import Control.Monad.Except
 import Control.Monad.Primitive
 import System.IO.Unsafe
 import Data.VectorSpace
@@ -92,6 +94,19 @@ instance forall s a . (Shape s, TensorScalar a, Show a) => Show (Tensor s a) whe
 -- | Type safe reshaping.
 reshape :: (Shape s1, Shape s2, Size s1 ~ Size s2) => Tensor s1 a -> Tensor s2 a
 reshape = unsafeCoerce
+
+-- | Dynamic reshaping. Useful in cases when the compiler cannot figure out that
+-- 2 shapes have the same size at compile time. This may legitimately happen when
+-- using the 'SomeNat' GADT to make dynamic shapes.
+dynReshape :: forall m s1 s2 a
+           . (MonadError String m, Shape s1, Shape s2) => Tensor s1 a -> m (Tensor s2 a)
+dynReshape t1 = do
+  when (size (Proxy :: Proxy s1) /= size (Proxy :: Proxy s2)) $ do
+    throwError $ "Couldn't reshape tensor from shape "
+      ++ show (dimensions (Proxy :: Proxy s1)) ++ " to shape "
+      ++ show (dimensions (Proxy :: Proxy s2))
+      ++ " due to incompatible size."
+  return $ unsafeCoerce t1
 
 -- | Returns the CuDNN datatype of a tensor.
 dtype :: forall s a . (TensorScalar a) => Tensor s a -> CuDNN.DataType
@@ -207,16 +222,23 @@ broadcast inp = unsafePerformIO $ do
         $ take (nbdim (Proxy :: Proxy s2) - nbdim (Proxy :: Proxy s1)) (repeat 1)
         ++ dimensions (Proxy :: Proxy s1)
       out_shape = fmap fromIntegral $ dimensions (Proxy :: Proxy s2)
+      inp_size = fromIntegral $ size (Proxy :: Proxy s1)
       out_size = fromIntegral $ size (Proxy :: Proxy s2)
       out_nbdim = fromIntegral $ nbdim (Proxy :: Proxy s2)
-  minp <- unsafeThaw inp
-  mout <- MT.emptyTensor
-  MT.withDevicePtr minp $ \inpptr -> do
-    MT.withDevicePtr mout $ \outptr -> do
-      CUDA.withListArray inp_shape $ \inp_shapeptr -> do
-        CUDA.withListArray out_shape $ \out_shapeptr -> do
-          broadcast_copy out_nbdim out_size inpptr inp_shapeptr outptr out_shapeptr
-  unsafeFreeze mout
+  -- We avoid copying when the size doesn't change.
+  if out_size == inp_size
+    then return $ case dynReshape inp of
+                   Right out -> out
+                   Left err -> error err
+    else do
+    minp <- unsafeThaw inp
+    mout <- MT.emptyTensor
+    MT.withDevicePtr minp $ \inpptr -> do
+      MT.withDevicePtr mout $ \outptr -> do
+        CUDA.withListArray inp_shape $ \inp_shapeptr -> do
+          CUDA.withListArray out_shape $ \out_shapeptr -> do
+            broadcast_copy out_nbdim out_size inpptr inp_shapeptr outptr out_shapeptr
+    unsafeFreeze mout
 
 instance forall a s . (TensorScalar a, Shape s) => Num (Tensor s a) where
   t1 + t2 = unsafePerformIO $ do
