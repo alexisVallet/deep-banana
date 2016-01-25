@@ -23,15 +23,19 @@ import DeepBanana.Layer
 import DeepBanana.Layer.CUDA.Monad
 
 -- linear layer
-dot :: (TensorScalar a, KnownNat m, KnownNat n, KnownNat k)
-    => Layer CUDA a '[] (Tensor [n,m] a,Tensor [m,k] a) (Tensor [n,k] a)
+dot :: (TensorScalar a)
+    => Layer CUDA a '[] (Tensor 2 a,Tensor 2 a) (Tensor 2 a)
 dot = combinePasses' fwddot bwddot
   where fwddot (x,w) = do
+          let n :. m :. Z = shape x
+              m' :. k :. Z = shape w
+          when (m /= m') $ throwError $
+            "Incompatible shapes " ++ show (shape x) ++ " and " ++ show (shape w) ++ " for dot product."
           handle <- asks cublasHandle
           return $ runST $ do
             mw <- unsafeThaw w
             mx <- unsafeThaw x
-            out <- MT.emptyTensor
+            out <- MT.emptyTensor $ n :. k :. Z
             gemmFwd handle Cublas.N Cublas.N 1 mx mw 0 out
             unsafeFreeze out
         bwddot (x,w) _ = do
