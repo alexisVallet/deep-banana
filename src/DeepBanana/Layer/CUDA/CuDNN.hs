@@ -6,7 +6,6 @@ module DeepBanana.Layer.CUDA.CuDNN (
   , CuDNN.convolution_fwd_algo_implicit_precomp_gemm
   , CuDNN.convolution_fwd_algo_gemm
   , CuDNN.convolution_fwd_algo_direct
-  , ConvOutShape
   , activation
   , CuDNN.activation_sigmoid
   , CuDNN.activation_relu
@@ -15,7 +14,6 @@ module DeepBanana.Layer.CUDA.CuDNN (
   , CuDNN.pooling_max
   , CuDNN.pooling_average_count_include_padding
   , CuDNN.pooling_average_count_exclude_padding
-  , PoolOutShape
   , nhwc_to_nchw
   , nchw_to_nhwc
   ) where
@@ -40,25 +38,19 @@ import DeepBanana.Tensor
 import qualified DeepBanana.Tensor.Mutable as MT
 import DeepBanana.Tensor.Mutable (MTensor, IOTensor, withDevicePtr, emptyTensor)
 
-convolution2d :: (TensorScalar a, Shape input_shape, Shape filter_shape,
-                  Shape padding, Shape stride, Shape out_shape,
-                  out_shape ~ ConvOutShape input_shape filter_shape padding stride,
-                  Nbdim input_shape ~ 4, Nbdim filter_shape ~ 4, Nbdim out_shape ~ 4,
-                  Nbdim stride ~ 2, Nbdim padding ~ 2)
-              => Proxy [padding,stride]
+convolution2d :: (TensorScalar a)
+              => (Int,Int)
+              -> (Int,Int)
               -> CuDNN.ConvolutionFwdAlgo
-              -> Layer CUDA a
-                   '[Tensor filter_shape a]
-                   (Tensor input_shape a)
-                   (Tensor out_shape a)
-convolution2d p algo =
+              -> Layer CUDA a '[Tensor 4 a] (Tensor 4 a) (Tensor 4 a)
+convolution2d padding stride algo =
   combinePasses convfwd convbwd
   where convfwd (HLS (HCons filters HNil)) fmaps = do
           handle <- asks cudnnHandle
           return $ runST $ do
             filters' <- unsafeThaw filters
             fmaps' <- unsafeThaw fmaps
-            convres <- convolution2dFwd p handle algo fmaps' filters'
+            convres <- convolution2dFwd handle padding stride algo fmaps' filters'
             unsafeFreeze convres
         convbwd (HLS (HCons filters HNil)) fmaps _ = do
           handle <- asks cudnnHandle
@@ -66,19 +58,19 @@ convolution2d p algo =
                 filters' <- unsafeThaw filters
                 fmaps' <- unsafeThaw fmaps
                 upgrad' <- unsafeThaw upgrad
-                filtersgrad <- convolution2dBwdFilters p handle fmaps' filters' upgrad'
+                filtersgrad <- convolution2dBwdFilters handle padding stride fmaps' filters' upgrad'
                 unsafeFreeze filtersgrad
               bwdinputs upgrad = runST $ do
                 filters' <- unsafeThaw filters
                 fmaps' <- unsafeThaw fmaps
                 upgrad' <- unsafeThaw upgrad
-                inputsgrad <- convolution2dBwdInputs p handle fmaps' filters' upgrad'
+                inputsgrad <- convolution2dBwdInputs handle padding stride fmaps' filters' upgrad'
                 unsafeFreeze inputsgrad
           return $ \upgrad -> (HLS $ bwdfilters upgrad `HCons` HNil, bwdinputs upgrad)
 
-activation :: (TensorScalar a, Shape s, Nbdim s ~ 4)
+activation :: (TensorScalar a)
            => CuDNN.ActivationMode
-           -> Layer CUDA a '[] (Tensor s a) (Tensor s a)
+           -> Layer CUDA a '[] (Tensor 4 a) (Tensor 4 a)
 activation mode =
   combinePasses' actfwd actbwd
   where actfwd fmaps = do
@@ -97,21 +89,19 @@ activation mode =
             unsafeFreeze grad
 
 -- pooling
-pooling2d :: (TensorScalar a, Shape input_shape, Shape pooling_size,
-              Shape padding, Shape stride, Shape out_shape,
-              out_shape ~ PoolOutShape input_shape pooling_size padding stride,
-              Nbdim input_shape ~ 4, Nbdim out_shape ~ 4, Nbdim pooling_size ~ 2,
-              Nbdim padding ~ 2, Nbdim stride ~ 2)
-          => Proxy [pooling_size,padding,stride]
+pooling2d :: (TensorScalar a)
+          => (Int,Int)
+          -> (Int,Int)
+          -> (Int,Int)
           -> CuDNN.PoolingMode
-          -> Layer CUDA a '[] (Tensor input_shape a) (Tensor out_shape a)
-pooling2d p mode =
+          -> Layer CUDA a '[] (Tensor 4 a) (Tensor 4 a)
+pooling2d psize padding stride mode =
   combinePasses' poolfwd poolbwd
   where poolfwd fmaps = do
           handle <- asks cudnnHandle
           return $ runST $ do
             fmaps' <- unsafeThaw fmaps
-            poolres <- pooling2dFwd p handle mode fmaps'
+            poolres <- pooling2dFwd handle psize padding stride mode fmaps'
             unsafeFreeze poolres
         poolbwd inp out = do
           handle <- asks cudnnHandle
@@ -119,12 +109,11 @@ pooling2d p mode =
             inp' <- unsafeThaw inp
             out' <- unsafeThaw out
             upgrad' <- unsafeThaw upgrad
-            grad <- pooling2dBwd p handle mode inp' out' upgrad'
+            grad <- pooling2dBwd handle psize padding stride mode inp' out' upgrad'
             unsafeFreeze grad
 
-nchw_to_nhwc :: forall n c h w a
-             . (TensorScalar a, KnownNat n, KnownNat c, KnownNat h, KnownNat w)
-             => Layer CUDA a '[] (Tensor [n,c,h,w] a) (Tensor [n,h,w,c] a)
+nchw_to_nhwc :: (TensorScalar a)
+             => Layer CUDA a '[] (Tensor 4 a) (Tensor 4 a)
 nchw_to_nhwc = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
           handle <- asks cudnnHandle
@@ -139,9 +128,8 @@ nchw_to_nhwc = combinePasses' fwdTrans bwdTrans
             mu' <- nhwc_to_nchw' handle mu
             unsafeFreeze mu'
 
-nhwc_to_nchw :: forall n c h w a
-                . (TensorScalar a, KnownNat n, KnownNat c, KnownNat h, KnownNat w)
-                => Layer CUDA a '[] (Tensor [n,h,w,c] a) (Tensor [n,c,h,w] a)
+nhwc_to_nchw :: (TensorScalar a)
+                => Layer CUDA a '[] (Tensor 4 a) (Tensor 4 a)
 nhwc_to_nchw = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
           handle <- asks cudnnHandle
@@ -180,27 +168,27 @@ withDescriptor name create set destroy action = do
   handleError ("Couldn't destroy " ++ name ++ " descriptor.") $ destroy desc
   return x
 
-withTensor4d :: forall a b s . (TensorScalar a, Shape s, Nbdim s ~ 4)
-             => IOTensor s a
+withTensor4d :: (TensorScalar a)
+             => IOTensor 4 a
              -> (CuDNN.TensorDescriptor -> CUDA.DevicePtr a -> IO b)
              -> IO b
 withTensor4d tensor action = do
   datatype <- MT.dtype tensor
-  let [n,c,h,w] = fmap fromIntegral $ dimensions (Proxy :: Proxy s)
+  let [n,c,h,w] = fmap fromIntegral $ dimensions $ MT.shape tensor
   withDescriptor
     "tensor"
     CuDNN.createTensorDescriptor
     (\d -> CuDNN.setTensor4dDescriptor d CuDNN.nchw datatype n c h w)
     CuDNN.destroyTensorDescriptor $ \tensordesc -> withDevicePtr tensor $ \dvcptr -> do
       action tensordesc dvcptr
-                
-withFilter4d :: forall a b s . (TensorScalar a, Shape s, Nbdim s ~ 4)
-             => IOTensor s a
+
+withFilter4d :: (TensorScalar a)
+             => IOTensor 4 a
              -> (CuDNN.FilterDescriptor -> CUDA.DevicePtr a -> IO b)
              -> IO b
 withFilter4d tensor action = do
   datatype <- MT.dtype tensor
-  let [n,c,h,w] = fmap fromIntegral $ dimensions (Proxy :: Proxy s)
+  let [n,c,h,w] = fmap fromIntegral $ dimensions $ MT.shape tensor
   withDescriptor
     "filter"
     CuDNN.createFilterDescriptor
@@ -219,38 +207,30 @@ withConvDesc (padh,padw) (strh,strw) (uph,upw) = do
     (\d -> CuDNN.setConvolution2dDescriptor d cpadh cpadw cstrh cstrw cupw cuph CuDNN.convolution)
     CuDNN.destroyConvolutionDescriptor
 
--- CuDNN bindings with mutable tensors.
-type family ConvOutDim input_dim filter_dim padding stride where
-  ConvOutDim input_dim filter_dim padding stride =
-    1 + Quotient (input_dim + (2 * padding) - filter_dim) stride
-
-type family ConvOutShape input_shape filter_shape padding stride where
-  ConvOutShape [n1,c1,h1,w1] [n2,c1,h2,w2] [padh,padw] [strh,strw] =
-    [n1,n2,ConvOutDim h1 h2 padh strh,ConvOutDim w1 w2 padw strw]
+convOutShape :: Dim 4 -> Dim 4 -> (Int,Int) -> (Int,Int) -> Dim 4
+convOutShape (n1:.c1:.h1:.w1:.Z) (n2:.c2:.h2:.w2:.Z) (padh,padw) (strh,strw) =
+  n1:.n2:.convOutDim h1 h2 padh strh:.convOutDim w1 w2 padw strw:.Z
+  where convOutDim input_dim filter_dim padding stride =
+          1 + (input_dim + (2 * padding) - filter_dim) `div` stride
 
 -- convolution
-convolution2dFwd :: forall input_shape filter_shape padding stride out_shape m a
-                 . (PrimMonad m, TensorScalar a, Shape input_shape,
-                    Shape filter_shape, Shape padding, Shape stride, Shape out_shape,
-                    out_shape ~ ConvOutShape input_shape filter_shape padding stride,
-                    Nbdim input_shape ~ 4, Nbdim filter_shape ~ 4, Nbdim out_shape ~ 4)
-                 => Proxy [padding,stride]
-                 -> CuDNN.Handle
+convolution2dFwd :: forall m a . (PrimMonad m, TensorScalar a)
+                 => CuDNN.Handle
+                 -> (Int,Int)
+                 -> (Int,Int)
                  -> CuDNN.ConvolutionFwdAlgo
-                 -> MTensor (PrimState m) input_shape a
-                 -> MTensor (PrimState m) filter_shape a
-                 -> m (MTensor (PrimState m) out_shape a)
-convolution2dFwd p handle algo fmaps filters = unsafePrimToPrim $ do
-  -- Getting padding and stride into the value-level realm.
-  let [padh,padw] = dimensions (Proxy :: Proxy padding)
-      [strh,strw] = dimensions (Proxy :: Proxy stride)
+                 -> MTensor (PrimState m) 4 a
+                 -> MTensor (PrimState m) 4 a
+                 -> m (MTensor (PrimState m) 4 a)
+convolution2dFwd handle (padh,padw) (strh,strw) algo fmaps filters = unsafePrimToPrim $ do
   -- make the descriptors
-  let runConv = withConvDesc (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
-        withTensor4d (unsafeCoerce fmaps :: IOTensor input_shape a)
+  let outshp = convOutShape (MT.shape fmaps) (MT.shape filters) (padh,padw) (strh,strw)
+      runConv = withConvDesc (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
+        withTensor4d (unsafeCoerce fmaps :: IOTensor 4 a)
           $ \inputdesc inputptr -> do
-          withFilter4d (unsafeCoerce filters :: IOTensor filter_shape a)
+          withFilter4d (unsafeCoerce filters :: IOTensor 4 a)
             $ \filtersdesc filtersptr -> do
-            output <- emptyTensor :: IO (IOTensor out_shape a)
+            output <- emptyTensor outshp :: IO (IOTensor 4 a)
             withTensor4d output $ \outputdesc outputptr -> do
               -- allocate workspace
               workspacesize <- alloca $ \wkspcsizeptr -> do
@@ -270,34 +250,26 @@ convolution2dFwd p handle algo fmaps filters = unsafePrimToPrim $ do
                     outputptr
             return $ unsafeCoerce output
   runConv `catch` \e -> do
-    error $ "Exception thrown in convolution forward pass: " ++ show (e :: SomeException) ++ "\n filter shape: " ++ show (dimensions (Proxy :: Proxy filter_shape)) ++ ", image shape: " ++ show (dimensions (Proxy :: Proxy input_shape))
+    error $ "Exception thrown in convolution forward pass: " ++ show (e :: SomeException) ++ "\n filter shape: " ++ show (MT.shape filters) ++ ", image shape: " ++ show (MT.shape fmaps)
 
-convolution2dBwdFilters :: forall input_shape filter_shape padding stride out_shape m a
-                         . (PrimMonad m, TensorScalar a, Shape input_shape,
-                            Shape filter_shape, Shape padding, Shape stride,
-                            Shape out_shape,
-                            out_shape ~ ConvOutShape input_shape filter_shape padding stride,
-                            Nbdim input_shape ~ 4, Nbdim filter_shape ~ 4,
-                            Nbdim out_shape ~ 4)
-                         => Proxy [padding,stride]
-                         -> CuDNN.Handle
-                         -> MTensor (PrimState m) input_shape a
-                         -> MTensor (PrimState m) filter_shape a
-                         -> MTensor (PrimState m) out_shape  a
-                         -> m (MTensor (PrimState m) filter_shape a)
-convolution2dBwdFilters p handle fmaps filters upgrad = unsafePrimToPrim $ do
-  -- Getting padding and stride into the value-level realm.
-  let [padh,padw] = dimensions (Proxy :: Proxy padding)
-      [strh,strw] = dimensions (Proxy :: Proxy stride)
+convolution2dBwdFilters :: forall m a . (PrimMonad m, TensorScalar a)
+                        => CuDNN.Handle
+                        -> (Int,Int)
+                        -> (Int,Int)
+                        -> MTensor (PrimState m) 4 a
+                        -> MTensor (PrimState m) 4 a
+                        -> MTensor (PrimState m) 4  a
+                        -> m (MTensor (PrimState m) 4 a)
+convolution2dBwdFilters handle (padh,padw) (strh,strw) fmaps filters upgrad = unsafePrimToPrim $ do
   -- make the descriptors
   let runConv = withConvDesc (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
-        withTensor4d (unsafeCoerce fmaps :: IOTensor input_shape a)
+        withTensor4d (unsafeCoerce fmaps :: IOTensor 4 a)
           $ \inputdesc inputptr -> do
-          withTensor4d (unsafeCoerce upgrad :: IOTensor out_shape a)
+          withTensor4d (unsafeCoerce upgrad :: IOTensor 4 a)
             $ \upgraddesc upgradptr -> do
             withArray [1] $ \alpha -> withArray [0] $ \beta -> do
               -- compute gradient with regards to the filters
-              filtersgrad <- emptyTensor :: IO (IOTensor filter_shape a)
+              filtersgrad <- emptyTensor $ MT.shape filters :: IO (IOTensor 4 a)
               withFilter4d filtersgrad $ \filtersgraddesc filtersgradptr ->
                 handleError
                 "Couldn't compute convolution gradient with respect to filters." $
@@ -306,32 +278,24 @@ convolution2dBwdFilters p handle fmaps filters upgrad = unsafePrimToPrim $ do
               return $ unsafeCoerce filtersgrad
   runConv `catch` \e -> error $ "Exception thrown in convolution backward pass with regards to filters: " ++ show (e :: IOException)
 
-convolution2dBwdInputs :: forall input_shape filter_shape padding stride out_shape m a
-                       . (PrimMonad m, TensorScalar a, Shape input_shape,
-                          Shape filter_shape, Shape padding, Shape stride,
-                          Shape out_shape,
-                          out_shape ~ ConvOutShape input_shape filter_shape padding stride,
-                          Nbdim input_shape ~ 4, Nbdim filter_shape ~ 4,
-                          Nbdim out_shape ~ 4)
-                       => Proxy [padding,stride]
-                       -> CuDNN.Handle
-                       -> MTensor (PrimState m) input_shape a
-                       -> MTensor (PrimState m) filter_shape a
-                       -> MTensor (PrimState m) out_shape a
-                       -> m (MTensor (PrimState m) input_shape a)
-convolution2dBwdInputs p handle fmaps filters upgrad = unsafePrimToPrim $ do
-  -- Getting padding and stride into the value-level realm.
-  let [padh,padw] = dimensions (Proxy :: Proxy padding)
-      [strh,strw] = dimensions (Proxy :: Proxy stride)
+convolution2dBwdInputs :: forall m a . (PrimMonad m, TensorScalar a)
+                       => CuDNN.Handle
+                       -> (Int,Int)
+                       -> (Int,Int)
+                       -> MTensor (PrimState m) 4 a
+                       -> MTensor (PrimState m) 4 a
+                       -> MTensor (PrimState m) 4 a
+                       -> m (MTensor (PrimState m) 4 a)
+convolution2dBwdInputs handle (padh,padw) (strh,strw) fmaps filters upgrad = unsafePrimToPrim $ do
   -- make the descriptors
   let runConv = withConvDesc (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
-        withFilter4d (unsafeCoerce filters :: IOTensor filter_shape a)
+        withFilter4d (unsafeCoerce filters :: IOTensor 4 a)
           $ \filtersdesc filtersptr -> do
-          withTensor4d (unsafeCoerce upgrad :: IOTensor out_shape a)
+          withTensor4d (unsafeCoerce upgrad :: IOTensor 4 a)
             $ \upgraddesc upgradptr -> do
             withArray [1] $ \alpha -> withArray [0] $ \beta -> do
               -- compute gradient with regards to the input feature maps
-              inputsgrad <- emptyTensor :: IO (IOTensor input_shape a)
+              inputsgrad <- emptyTensor $ MT.shape fmaps :: IO (IOTensor 4 a)
               withTensor4d inputsgrad $ \inputsgraddesc inputsgradptr ->
                 handleError
                 "Couldn't compute convolution gradient with respect to the inputs." $
@@ -341,14 +305,14 @@ convolution2dBwdInputs p handle fmaps filters upgrad = unsafePrimToPrim $ do
   runConv `catch` \e -> error $ "Exception thrown in convolution backward pass with regards to data: " ++ show (e :: IOException)
 
 -- activations
-activationFwd :: forall s m a . (PrimMonad m, Shape s, TensorScalar a, Nbdim s ~ 4)
+activationFwd :: forall m a . (PrimMonad m, TensorScalar a)
               => CuDNN.Handle
               -> CuDNN.ActivationMode
-              -> MTensor (PrimState m) s a
-              -> m (MTensor (PrimState m) s a)
+              -> MTensor (PrimState m) 4 a
+              -> m (MTensor (PrimState m) 4 a)
 activationFwd handle mode input = unsafePrimToPrim $ do
-  withTensor4d (unsafeCoerce input :: IOTensor s a) $ \inputdesc inputptr -> do
-    output <- emptyTensor :: IO (IOTensor s a)
+  withTensor4d (unsafeCoerce input :: IOTensor 4 a) $ \inputdesc inputptr -> do
+    output <- emptyTensor $ MT.shape input :: IO (IOTensor 4 a)
     withTensor4d output $ \outputdesc outputptr -> do
       withArray [1] $ \alpha -> withArray [0] $ \beta -> do
         handleError "Couldn't compute activations." $
@@ -356,17 +320,17 @@ activationFwd handle mode input = unsafePrimToPrim $ do
           inputptr beta outputdesc outputptr
         return $ unsafeCoerce output
 
-activationBwd :: forall s m a . (PrimMonad m, Shape s, TensorScalar a, Nbdim s ~ 4)
+activationBwd :: forall m a . (PrimMonad m, TensorScalar a)
               => CuDNN.Handle
               -> CuDNN.ActivationMode
-              -> MTensor (PrimState m) s a
-              -> MTensor (PrimState m) s a
-              -> MTensor (PrimState m) s a
-              -> m (MTensor (PrimState m) s a)
+              -> MTensor (PrimState m) 4 a
+              -> MTensor (PrimState m) 4 a
+              -> MTensor (PrimState m) 4 a
+              -> m (MTensor (PrimState m) 4 a)
 activationBwd handle mode input output upgrad = unsafePrimToPrim $ do
-  withTensor4d (unsafeCoerce input :: IOTensor s a) $ \inputdesc inputptr -> do
-    withTensor4d (unsafeCoerce upgrad :: IOTensor s a) $ \upgraddesc upgradptr -> do
-      grad <- emptyTensor :: IO (IOTensor s a)
+  withTensor4d (unsafeCoerce input :: IOTensor 4 a) $ \inputdesc inputptr -> do
+    withTensor4d (unsafeCoerce upgrad :: IOTensor 4 a) $ \upgraddesc upgradptr -> do
+      grad <- emptyTensor $ MT.shape input :: IO (IOTensor 4 a)
       withTensor4d (unsafeCoerce output :: IOTensor s a) $ \outputdesc outputptr -> do
         withTensor4d grad $ \graddesc gradptr -> do
           withArray [1] $ \alpha -> withArray [0] $ \beta -> do
@@ -377,10 +341,10 @@ activationBwd handle mode input output upgrad = unsafePrimToPrim $ do
             return $ unsafeCoerce grad
 
 -- 2d pooling
--- Helper to compute output shape.
-pooling2dOutputShape :: (Int,Int) -> (Int,Int) -> (Int,Int) -> [Int] -> [Int]
-pooling2dOutputShape (szr,szc) (padr,padc) (strr, strc) [n,ch,r,c] =
-  [n,ch,outr,outc]
+-- Helper to compute output MT.shape.
+pooling2dOutputShape :: (Int,Int) -> (Int,Int) -> (Int,Int) -> Dim 4 -> Dim 4
+pooling2dOutputShape (szr,szc) (padr,padc) (strr, strc) (n:.ch:.r:.c:.Z) =
+  (n:.ch:.outr:.outc:.Z)
   where
     inr = r + padr
     inc = c + padc
@@ -389,38 +353,25 @@ pooling2dOutputShape (szr,szc) (padr,padc) (strr, strc) [n,ch,r,c] =
     overlap_r = max 0 (szr - strr)
     overlap_c = max 0 (szc - strc)
 
--- Pooling output shape, at the type level.
-type family PoolOutDim input_size pooling_size padding stride where
-  PoolOutDim input_size pooling_size padding stride =
-    Quotient (input_size + padding - Max 0 (pooling_size - stride)) stride
-
-type family PoolOutShape input_shape pooling_shape padding stride where
-  PoolOutShape [n,c,h,w] [poolh,poolw] [padh,padw] [strh,strw] =
-    [n,c,PoolOutDim h poolh padh strh,PoolOutDim w poolw padw strw]
-
-pooling2dFwd :: forall input_shape pooling_size padding stride out_shape m a
-           . (PrimMonad m, TensorScalar a, Shape input_shape, Shape pooling_size,
-              Shape padding, Shape stride, Shape out_shape,
-              out_shape ~ PoolOutShape input_shape pooling_size padding stride,
-              Nbdim input_shape ~ 4, Nbdim out_shape ~ 4)
-           => Proxy [pooling_size,padding,stride]
-           -> CuDNN.Handle
-           -> CuDNN.PoolingMode
-           -> MTensor (PrimState m) input_shape a
-           -> m (MTensor (PrimState m) out_shape a)
-pooling2dFwd p handle mode input = unsafePrimToPrim $ do
-  -- pooling descriptor
-  let [cwh,cww] = fmap fromIntegral $ dimensions (Proxy :: Proxy pooling_size)
-      [cpadh,cpadw] = fmap fromIntegral $ dimensions (Proxy :: Proxy padding)
-      [cstrh,cstrw] = fmap fromIntegral $ dimensions (Proxy :: Proxy stride)
+pooling2dFwd :: forall m a . (PrimMonad m, TensorScalar a)
+             => CuDNN.Handle
+             -> (Int,Int)
+             -> (Int,Int)
+             -> (Int,Int)
+             -> CuDNN.PoolingMode
+             -> MTensor (PrimState m) 4 a
+             -> m (MTensor (PrimState m) 4 a)
+pooling2dFwd handle (wh,ww) (padh,padw) (strh,strw) mode input = unsafePrimToPrim $ do
+  let [cwh,cww,cpadh,cpadw,cstrh,cstrw] = fmap fromIntegral [wh,ww,padh,padw,strh,strw]
+      outshp = pooling2dOutputShape (wh,ww) (padh,padw) (strh,strw) $ MT.shape input
   withDescriptor
     "pooling"
     CuDNN.createPoolingDescriptor
     (\d -> CuDNN.setPooling2dDescriptor d mode cwh cww cpadh cpadw cstrh cstrw)
     CuDNN.destroyPoolingDescriptor $ \pooldesc -> do
-      withTensor4d (unsafeCoerce input :: IOTensor input_shape a)
+      withTensor4d (unsafeCoerce input :: IOTensor 4 a)
         $ \inputdesc inputptr -> do
-        output <- emptyTensor :: IO (IOTensor out_shape a)
+        output <- emptyTensor outshp :: IO (IOTensor 4 a)
         -- actual pooling
         withTensor4d output $ \outputdesc outputptr -> do
           withArray [1] $ \alpha -> withArray [0] $ \beta -> do
@@ -429,35 +380,30 @@ pooling2dFwd p handle mode input = unsafePrimToPrim $ do
               inputptr beta outputdesc outputptr
             return $ unsafeCoerce output
 
-pooling2dBwd :: forall input_shape pooling_size padding stride out_shape m a
-           . (PrimMonad m, TensorScalar a, Shape input_shape, Shape pooling_size,
-              Shape padding, Shape stride, Shape out_shape,
-              out_shape ~ PoolOutShape input_shape pooling_size padding stride,
-              Nbdim input_shape ~ 4, Nbdim out_shape ~ 4)
-           => Proxy [pooling_size,padding,stride]
-           -> CuDNN.Handle
-           -> CuDNN.PoolingMode
-           -> MTensor (PrimState m) input_shape a
-           -> MTensor (PrimState m) out_shape a
-           -> MTensor (PrimState m) out_shape a
-           -> m (MTensor (PrimState m) input_shape a)
-pooling2dBwd p handle mode inp out upgrad = unsafePrimToPrim $ do
-  -- pooling descriptor
-  let [cwh,cww] = fmap fromIntegral $ dimensions (Proxy :: Proxy pooling_size)
-      [cpadh,cpadw] = fmap fromIntegral $ dimensions (Proxy :: Proxy padding)
-      [cstrh,cstrw] = fmap fromIntegral $ dimensions (Proxy :: Proxy stride)
+pooling2dBwd :: forall m a . (PrimMonad m, TensorScalar a)
+             => CuDNN.Handle
+             -> (Int,Int)
+             -> (Int,Int)
+             -> (Int,Int)
+             -> CuDNN.PoolingMode
+             -> MTensor (PrimState m) 4 a
+             -> MTensor (PrimState m) 4 a
+             -> MTensor (PrimState m) 4 a
+             -> m (MTensor (PrimState m) 4 a)
+pooling2dBwd handle (wh,ww) (padh,padw) (strh,strw) mode inp out upgrad = unsafePrimToPrim $ do
+  let [cwh,cww,cpadh,cpadw,cstrh,cstrw] = fmap fromIntegral [wh,ww,padh,padw,strh,strw]
   withDescriptor
     "pooling"
     CuDNN.createPoolingDescriptor
     (\d -> CuDNN.setPooling2dDescriptor d mode cwh cww cpadh cpadw cstrh cstrw)
     CuDNN.destroyPoolingDescriptor $ \pooldesc -> do
-      withTensor4d (unsafeCoerce inp :: IOTensor input_shape a)
+      withTensor4d (unsafeCoerce inp :: IOTensor 4 a)
         $ \inpdesc inpptr -> do
-        withTensor4d (unsafeCoerce out :: IOTensor out_shape a)
+        withTensor4d (unsafeCoerce out :: IOTensor 4 a)
           $ \outdesc outptr -> do
-          withTensor4d (unsafeCoerce upgrad :: IOTensor out_shape a)
+          withTensor4d (unsafeCoerce upgrad :: IOTensor 4 a)
             $ \upgraddesc upgradptr -> do
-            grad <- emptyTensor :: IO (IOTensor input_shape a)
+            grad <- emptyTensor $ MT.shape inp :: IO (IOTensor 4 a)
             withTensor4d grad $ \graddesc gradptr -> do
               withArray [1] $ \alpha -> withArray [0] $ \beta -> do
                 handleError "Couldn't compute backward pooling." $
@@ -465,77 +411,71 @@ pooling2dBwd p handle mode inp out upgrad = unsafePrimToPrim $ do
                   upgraddesc upgradptr inpdesc inpptr beta graddesc gradptr
               return $ unsafeCoerce grad
 
--- Softmax
-softmaxFwd :: forall m s a . (PrimMonad m, Shape s, Nbdim s ~ 4, TensorScalar a)
-           => CuDNN.Handle
-           -> CuDNN.SoftmaxAlgorithm
-           -> CuDNN.SoftmaxMode
-           -> MTensor (PrimState m) s a
-           -> m (MTensor (PrimState m) s a)
-softmaxFwd handle algo mode input = unsafePrimToPrim $ do
-  withTensor4d (unsafeCoerce input :: IOTensor s a)$ \inpdesc inpptr -> do
-    output <- emptyTensor :: IO (IOTensor s a)
-    withTensor4d output $ \outdesc outptr -> do
-      withArray [1] $ \alpha -> withArray [0] $ \beta -> do
-        handleError "Couldn't compute softmax." $
-          CuDNN.softmaxForward handle algo mode alpha
-          inpdesc inpptr beta outdesc outptr
-        return $ unsafeCoerce output
+-- -- Softmax
+-- softmaxFwd :: forall m a . (PrimMonad m, TensorScalar a)
+--            => CuDNN.Handle
+--            -> CuDNN.SoftmaxAlgorithm
+--            -> CuDNN.SoftmaxMode
+--            -> MTensor (PrimState m) 2 a
+--            -> m (MTensor (PrimState m) 2 a)
+-- softmaxFwd handle algo mode input = unsafePrimToPrim $ do
+--   withTensor4d (unsafeCoerce input :: IOTensor s a)$ \inpdesc inpptr -> do
+--     output <- emptyTensor :: IO (IOTensor s a)
+--     withTensor4d output $ \outdesc outptr -> do
+--       withArray [1] $ \alpha -> withArray [0] $ \beta -> do
+--         handleError "Couldn't compute softmax." $
+--           CuDNN.softmaxForward handle algo mode alpha
+--           inpdesc inpptr beta outdesc outptr
+--         return $ unsafeCoerce output
 
-softmaxBwd :: forall m s a . (PrimMonad m, Shape s, Nbdim s ~ 4, TensorScalar a)
-           => CuDNN.Handle
-           -> CuDNN.SoftmaxAlgorithm
-           -> CuDNN.SoftmaxMode
-           -> MTensor (PrimState m) s a
-           -> MTensor (PrimState m) s a
-           -> m (MTensor (PrimState m) s a)
-softmaxBwd handle algo mode src srcdiff = unsafePrimToPrim $ do
-  withTensor4d (unsafeCoerce src :: IOTensor s a) $ \srcdesc srcdata -> do
-    withTensor4d (unsafeCoerce srcdiff :: IOTensor s a)
-      $ \srcdiffdesc srcdiffdata -> do
-      destdiff <- emptyTensor :: IO (IOTensor s a)
-      withTensor4d destdiff $ \destdiffdesc destdiffdata -> do
-        withArray [1] $ \alpha -> withArray [0] $ \beta -> do
-          handleError "Couldn't compute softmax backward pass." $
-            CuDNN.softmaxBackward handle algo mode alpha
-            srcdesc srcdata srcdiffdesc srcdiffdata beta
-            destdiffdesc destdiffdata
-          return $ unsafeCoerce destdiff
+-- softmaxBwd :: forall m s a . (PrimMonad m, MT.Shape s, Nbdim s ~ 4, TensorScalar a)
+--            => CuDNN.Handle
+--            -> CuDNN.SoftmaxAlgorithm
+--            -> CuDNN.SoftmaxMode
+--            -> MTensor (PrimState m) s a
+--            -> MTensor (PrimState m) s a
+--            -> m (MTensor (PrimState m) s a)
+-- softmaxBwd handle algo mode src srcdiff = unsafePrimToPrim $ do
+--   withTensor4d (unsafeCoerce src :: IOTensor s a) $ \srcdesc srcdata -> do
+--     withTensor4d (unsafeCoerce srcdiff :: IOTensor s a)
+--       $ \srcdiffdesc srcdiffdata -> do
+--       destdiff <- emptyTensor :: IO (IOTensor s a)
+--       withTensor4d destdiff $ \destdiffdesc destdiffdata -> do
+--         withArray [1] $ \alpha -> withArray [0] $ \beta -> do
+--           handleError "Couldn't compute softmax backward pass." $
+--             CuDNN.softmaxBackward handle algo mode alpha
+--             srcdesc srcdata srcdiffdesc srcdiffdata beta
+--             destdiffdesc destdiffdata
+--           return $ unsafeCoerce destdiff
 
-nchw_to_nhwc' :: forall n c h w a m
-             . (PrimMonad m, TensorScalar a, KnownNat n, KnownNat c, KnownNat h,
-                KnownNat w)
-             => CuDNN.Handle
-             -> MTensor (PrimState m) [n,c,h,w] a
-             -> m (MTensor (PrimState m) [n,h,w,c] a)
+nchw_to_nhwc' :: forall m a . (PrimMonad m, TensorScalar a)
+              => CuDNN.Handle
+              -> MTensor (PrimState m) 4 a
+              -> m (MTensor (PrimState m) 4 a)
 nchw_to_nhwc' handle src = unsafePrimToPrim $ do
   res <- transformTensorIO handle CuDNN.nchw CuDNN.nhwc
-         (unsafeCoerce src :: IOTensor [n,c,h,w] a) :: IO (IOTensor [n,h,w,c] a)
+         (unsafeCoerce src :: IOTensor 4 a) :: IO (IOTensor 4 a)
   return $ unsafeCoerce res
 
-nhwc_to_nchw' :: forall n c h w a m
-             . (PrimMonad m, TensorScalar a, KnownNat n, KnownNat c, KnownNat h,
-                KnownNat w)
-             => CuDNN.Handle
-             -> MTensor (PrimState m) [n,h,w,c] a
-             -> m (MTensor (PrimState m) [n,c,h,w] a)
+nhwc_to_nchw' :: forall m a . (PrimMonad m, TensorScalar a)
+              => CuDNN.Handle
+              -> MTensor (PrimState m) 4 a
+              -> m (MTensor (PrimState m) 4 a)
 nhwc_to_nchw' handle src = unsafePrimToPrim $ do
   res <- transformTensorIO handle CuDNN.nhwc CuDNN.nchw
-         (unsafeCoerce src :: IOTensor [n,h,w,c] a) :: IO (IOTensor [n,c,h,w] a)
+         (unsafeCoerce src :: IOTensor 4 a) :: IO (IOTensor 4 a)
   return $ unsafeCoerce res
 
 -- Unsafe but useful.
-transformTensorIO :: forall a s1 s2
-                  . (TensorScalar a, Shape s1, Shape s2,
-                     Nbdim s1 ~ 4, Nbdim s2 ~ 4)
+transformTensorIO :: forall a . (TensorScalar a)
                   => CuDNN.Handle
                   -> CuDNN.TensorFormat
                   -> CuDNN.TensorFormat
-                  -> IOTensor s1 a
-                  -> IO (IOTensor s2 a)
+                  -> IOTensor 4 a
+                  -> IO (IOTensor 4 a)
 transformTensorIO handle srcf dstf src = do
   datatype <- MT.dtype src
-  let [a',b',c',d'] = dimensions (Proxy :: Proxy s1)
+  let [a',b',c',d'] = dimensions $ MT.shape src
       [n,c,h,w] = if srcf == CuDNN.nchw then [a',b',c',d']
                   else if srcf == CuDNN.nhwc then [a',d',b',c']
                        else error $ "Unsupported input format: " ++ show srcf
@@ -550,7 +490,9 @@ transformTensorIO handle srcf dstf src = do
         CuDNN.createTensorDescriptor
         (\d -> CuDNN.setTensor4dDescriptor d dstf datatype cn cc ch cw)
         CuDNN.destroyTensorDescriptor $ \dstdesc -> do
-          dst <- emptyTensor
+          dst <- emptyTensor $ if dstf == CuDNN.nchw
+                               then n:.c:.h:.w:.Z
+                               else n:.h:.w:.c:.Z
           withDevicePtr src $ \srcptr -> do
             withDevicePtr dst $ \dstptr -> do
               withArray [1] $ \alpha -> withArray [0] $ \beta -> do
@@ -559,32 +501,32 @@ transformTensorIO handle srcf dstf src = do
                   dstdesc dstptr
                 return dst
 
-addTensor :: forall a m s1 s2 . (TensorScalar a, PrimMonad m, Shape s1, Nbdim s1 ~ 4,
-                                 Shape s2, Nbdim s2 ~ 4)
+addTensor :: forall a m . (TensorScalar a, PrimMonad m)
           => CuDNN.Handle
           -> CuDNN.AddMode
-          -> MTensor (PrimState m) s1 a
-          -> MTensor (PrimState m) s2 a
-          -> m (MTensor (PrimState m) s1 a)
+          -> MTensor (PrimState m) 4 a
+          -> MTensor (PrimState m) 4 a
+          -> m (MTensor (PrimState m) 4 a)
 addTensor handle addMode bias src = unsafePrimToPrim $ do
-  out <- MT.copy (unsafeCoerce src :: IOTensor s1 a)
-  withTensor4d (unsafeCoerce bias :: IOTensor s2 a) $ \biasdesc biasptr -> do
-    withTensor4d (unsafeCoerce out :: IOTensor s1 a) $ \outdesc outptr -> do
+  out <- MT.copy (unsafeCoerce src :: IOTensor 4 a)
+  withTensor4d (unsafeCoerce bias :: IOTensor 4 a) $ \biasdesc biasptr -> do
+    withTensor4d (unsafeCoerce out :: IOTensor 4 a) $ \outdesc outptr -> do
       withArray [1] $ \alpha -> withArray [1] $ \beta -> do
         handleError "Couldn't add the tensors." $
           CuDNN.addTensor handle addMode alpha biasdesc biasptr
           beta outdesc outptr
   return $ unsafeCoerce out
 
-convolutionBackwardBias :: forall n c h w a m
-                        . (TensorScalar a, PrimMonad m, KnownNat n, KnownNat c,
-                           KnownNat h, KnownNat w)
+convolutionBackwardBias :: forall a m
+                        . (TensorScalar a, PrimMonad m)
                         => CuDNN.Handle
-                        -> MTensor (PrimState m) [n,c,h,w] a
-                        -> m (MTensor (PrimState m) [1,c,1,1] a)
+                        -> MTensor (PrimState m) 4 a
+                        -> m (MTensor (PrimState m) 4 a)
 convolutionBackwardBias handle upgrad = unsafePrimToPrim $ do
-  biasgrad <- emptyTensor :: IO (IOTensor [1,c,1,1] a)
-  withTensor4d (unsafeCoerce upgrad :: IOTensor [n,c,h,w] a)
+  let n:.c:.h:.w:.Z = MT.shape upgrad
+      outshp = 1:.c:.1:.1:.Z
+  biasgrad <- emptyTensor outshp :: IO (IOTensor 4 a)
+  withTensor4d (unsafeCoerce upgrad :: IOTensor 4 a)
     $ \upgraddesc upgradptr -> do
     withTensor4d biasgrad $ \biasgraddesc biasgradptr -> do
       withArray [1] $ \alpha -> withArray [0] $ \beta -> do

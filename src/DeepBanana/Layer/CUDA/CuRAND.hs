@@ -16,63 +16,64 @@ import DeepBanana.Tensor.Mutable (MTensor, IOTensor, emptyTensor, withDevicePtr)
 import qualified DeepBanana.Tensor.Mutable as MT
 
 -- dropout
-dropout :: (TensorScalar a, Shape s)
+dropout :: (TensorScalar a, Shape (Dim n))
         => a
-        -> Layer CUDA a '[] (Tensor s a) (Tensor s a)
+        -> Layer CUDA a '[] (Tensor n a) (Tensor n a)
 dropout drop_proba = noWeights fwdbwd
   -- Simple dropout algo: generate a random tensor of 0 and 1s,
   -- elementwise multiply with the same random tensor on both forward
   -- and backward pass.
   where fwdbwd inp = do
           gen <- asks generator
-          mask <- liftIO $ dropoutMaskIO gen drop_proba
+          mask <- liftIO $ dropoutMaskIO gen (shape inp) drop_proba
           pure_mask <- unsafeFreeze mask
           return (inp * pure_mask, \upgrad -> upgrad * pure_mask)
 
 -- dropout
 -- compute a random mask of ones and zeros
 -- to apply elementwise to the input tensor.
-dropoutMaskIO :: forall a s . (TensorScalar a, Shape s)
+dropoutMaskIO :: (TensorScalar a, Shape (Dim n))
               => CuRAND.Generator
+              -> Dim n
               -> a
-              -> IO (IOTensor s a)
-dropoutMaskIO gen drop_proba = do
+              -> IO (IOTensor n a)
+dropoutMaskIO gen shp drop_proba = do
   -- Simple algo for dropout of activations:
   -- 1- generate an array of random values between 0 and 1
   -- 2- threshold that array with the dropout probability
   -- 3- elementwise multiply the input array with it
-  rand_array <- emptyTensor
+  rand_array <- emptyTensor shp
   withDevicePtr rand_array $ \randarrayptr -> do
     -- generate random array
-    generateUniform gen randarrayptr $ fromIntegral $ size (Proxy :: Proxy s)
+    generateUniform gen randarrayptr $ fromIntegral $ size shp
     -- threshold it
-    thresh randarrayptr (fromIntegral $ size (Proxy :: Proxy s)) drop_proba randarrayptr
+    thresh randarrayptr (fromIntegral $ size shp) drop_proba randarrayptr
     return rand_array
 
 -- generating random tensors
-uniform :: forall a s . (TensorScalar a, Shape s) => CUDA (Tensor s a)
-uniform = do
+uniform :: (TensorScalar a, Shape (Dim n)) => Dim n -> CUDA (Tensor n a)
+uniform shp = do
   gen <- asks generator
   liftIO $ do
-    res <- MT.emptyTensor
+    res <- MT.emptyTensor shp
     withDevicePtr res $ \resptr -> do
-      generateUniform gen resptr $ fromIntegral $ size (Proxy :: Proxy s)
+      generateUniform gen resptr $ fromIntegral $ size shp
     unsafeFreeze res
 
-normal :: forall a s . (TensorScalar a, Shape s) => a -> a -> CUDA (Tensor s a)
-normal mean std = do
+normal :: (TensorScalar a, Shape (Dim n)) => Dim n -> a -> a -> CUDA (Tensor n a)
+normal shp mean std = do
   gen <- asks generator
   liftIO $ do
-    res <- MT.emptyTensor
+    res <- MT.emptyTensor shp 
     withDevicePtr res $ \resptr -> do
-      generateNormal gen resptr (fromIntegral $ size (Proxy :: Proxy s)) mean std
+      generateNormal gen resptr (fromIntegral $ size shp) mean std
     unsafeFreeze res
 
-logNormal :: forall a s . (TensorScalar a, Shape s) => a -> a -> CUDA (Tensor s a)
-logNormal mean std = do
+logNormal :: (TensorScalar a, Shape (Dim n)) => Dim n -> a -> a -> CUDA (Tensor n a)
+logNormal shp mean std = do
   gen <- asks generator
   liftIO $ do
-    res <- emptyTensor
+    res <- emptyTensor shp
     withDevicePtr res $ \resptr -> do
-      generateLogNormal gen resptr (fromIntegral $ size (Proxy :: Proxy s)) mean std
+      generateLogNormal gen resptr (fromIntegral $ size shp) mean std
     unsafeFreeze res

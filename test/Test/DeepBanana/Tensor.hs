@@ -18,8 +18,11 @@ test_tensor = do
 test_broadcast :: Spec
 test_broadcast = describe "DeepBanana.Tensor.broadcast" $ do
   it "Works in a simple example" $ do
-    let x = fromList [1,2,3] :: Tensor '[3] CFloat
-        expected = fromList [1,2,3,
-                             1,2,3,
-                             1,2,3] :: Tensor '[3,3] CFloat
-    broadcast x `shouldBe` expected
+    let x = fromList (1:.3:.Z) [1,2,3] :: Tensor 2 CFloat
+        expected = fromList (3:.3:.Z) [1,2,3,
+                                       1,2,3,
+                                       1,2,3] :: Tensor 2 CFloat
+        actual = case broadcast (shape expected) x of
+          Left err -> error err
+          Right out -> out
+    actual `shouldBe` expected

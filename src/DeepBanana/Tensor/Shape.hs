@@ -1,40 +1,77 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GADTs, TypeFamilies, UndecidableInstances, StandaloneDeriving, DeriveGeneric #-}
 module DeepBanana.Tensor.Shape (
     Shape(..)
-  , dimensions
-  , nbdim
-  , size
-  , ScalarShape(..)
+  , Dim
+  , Z(..)
+  , SCons(..)
   ) where
 
+import Control.DeepSeq
+import Data.Proxy
+import Data.Serialize
 import GHC.TypeLits
+import GHC.Generics
+import Data.HList.HList
+import Unsafe.Coerce
 
-infixr 3 (:.)
-data Shape (n :: Nat) where
-  Z :: Shape 0
-  (:.) :: Int -> Shape n -> Shape (n + 1)
+infixr 3 :.
+data Z = Z
+data SCons b = Int :. b
 
-instance Show (Shape n) where
-  show s = "s" ++ show (dimensions s)
+deriving instance Show Z
+deriving instance (Show s) => Show (SCons s)
 
-dimensions :: Shape n -> [Int]
-dimensions Z = []
-dimension (n :. s) = n : dimensions s
+deriving instance Eq Z
+deriving instance (Eq s) => Eq (SCons s)
 
-nbdim :: Shape n -> Int
-nbdim Z = 0
-nbdim (_ :. s) = 1 + nbdim s
+deriving instance Ord Z
+deriving instance (Ord s) => Ord (SCons s)
 
-size :: Shape n -> Int
-size Z = 0
-size (n :. Z) = n
-size (n :. s) = n * size s
+deriving instance Generic Z
+deriving instance (Generic s) => Generic (SCons s)
 
-class ScalarShape (n :: Nat) where
-  scalarShape :: Shape n
+instance Serialize Z where
+  put Z = return ()
+  get = return Z
 
-instance ScalarShape 0 where
+instance (Serialize s) => Serialize (SCons s) where
+  put (i :. s) = do
+    put i
+    put s
+  get = do
+    i <- get
+    s <- get
+    return (i :. s)
+
+instance NFData Z
+instance (Generic (SCons s), NFData s) => NFData (SCons s)
+
+class (Show s, Eq s, Ord s, Generic s, Serialize s, NFData s) => Shape s where
+  dimensions :: s -> [Int]
+  scalarShape :: s
+  nbdim :: s -> Int
+  nbdim = length . dimensions
+  size :: s -> Int
+  size s = case dimensions s of
+    [] -> 0
+    [i] -> i
+    xs -> product xs
+  broadcastable :: s -> s -> Bool
+  broadcastable s1 s2 = broadcastable' (dimensions s1) (dimensions s2)
+    where broadcastable' s1' s2' = case (s1',s2') of
+            ([],[]) -> True
+            (n1:ns1,n2:ns2) -> (n1 == 1 || n1 == n2) && broadcastable' ns1 ns2
+            _ -> False
+
+instance Shape Z where
+  dimensions Z = []
   scalarShape = Z
 
-instance (ScalarShape n) => ScalarShape (n + 1) where
-  scalarShape = 1 :. (scalarShape :: Shape n)
+instance forall s . (Shape s) => Shape (SCons s) where
+  dimensions (i :. s) = i : dimensions s
+  scalarShape = 1 :. (scalarShape :: s)
+
+type family Dim (n :: Nat) where
+  Dim 0 = Z
+  Dim n = SCons (Dim (n - 1))
+

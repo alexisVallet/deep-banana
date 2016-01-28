@@ -15,12 +15,14 @@ import Foreign.C
 import System.IO
 import System.FilePath
 import Vision.Image as Friday hiding (read)
-import Vision.Primitive hiding (Shape)
+import Vision.Primitive hiding (Shape, Z, (:.))
+import qualified Vision.Primitive as VP
 import Vision.Image.Storage.DevIL
 import Pipes hiding (Proxy)
 import System.Directory
 import Data.Maybe
 import Control.Monad
+import Control.Monad.Except
 import Control.Monad.ST
 import Control.Monad.Random
 import Foreign.Storable
@@ -59,7 +61,7 @@ bstringToVec bstr =
 -- Serializing for Friday image.
 instance (Storable i)
          => Serialize (Manifest i) where
-  put (Manifest (Z:.w:.h) vec) = do
+  put (Manifest (VP.Z VP.:. w VP.:. h) vec) = do
     put w
     put h
     put $ vecToBstring vec
@@ -69,7 +71,7 @@ instance (Storable i)
     bstr <- get
     case bstringToVec bstr of
      Nothing -> error "Could not convert back to an image to data alignment issues."
-     Just vec -> return (Manifest (Z:.w:.h) vec)
+     Just vec -> return (Manifest (VP.Z VP.:. w VP.:. h) vec)
 
 load_mnist :: (Convertible StorageImage i)
            => FilePath -> IO [(i, Int)]
@@ -124,7 +126,7 @@ lazy_image_loader _ directory = forever $ do
      putStrLn $ "Unable to load image " ++ fpath
      putStrLn $ show err
    Right img -> do
-     let Z:. h :. w = Friday.shape img
+     let VP.Z VP.:. h VP.:. w = Friday.shape img
      if  h == 1  || w == 1
       then liftIO $ putStrLn $ "Image loaded as 1 by 1, skipping: " ++ fpath
       else do
@@ -160,7 +162,7 @@ randomize xs f = do
 img_to_vec :: (Image i, Pixel (ImagePixel i), Storable (PixelChannel (ImagePixel i)))
            => i -> V.Vector (PixelChannel (ImagePixel i))
 img_to_vec img =
-  let Manifest (Z :. h :. w) pixVec = compute img
+  let Manifest (VP.Z VP.:. h VP.:. w) pixVec = compute img
       c = nChannels img
       (pixFptr, o, l) = V.unsafeToForeignPtr pixVec
   in V.unsafeFromForeignPtr (castForeignPtr pixFptr) (c*o) (c*l)
@@ -190,7 +192,7 @@ batch_images :: (Image i, Storable (PixelChannel (ImagePixel i)),
 batch_images nb_labels batch_size = forever $ do
   imgAndLabels <- replicateM batch_size await
   let (images, labels) = unzip imgAndLabels
-      Z :. h :. w = Friday.shape $ head images
+      VP.Z VP.:. h VP.:. w = Friday.shape $ head images
       c = nChannels $ head images
       oneHot ls = V.fromList [if i `elem` ls then 1 else 0 | i <- [0..nb_labels - 1]]
       imgVecs = fmap img_to_vec $ images
@@ -198,12 +200,16 @@ batch_images nb_labels batch_size = forever $ do
       lmatrix = V.concat $ fmap oneHot labels
   yield (batch, lmatrix)
 
-batch_to_gpu :: (MonadIO m, TensorScalar a, Shape s1, Shape s2)
-             => Proxy [s1,s2]
-             -> Pipe (V.Vector a, V.Vector a) (Tensor s1 a, Tensor s2 a) m ()
-batch_to_gpu _ = forever $ do
+batch_to_gpu :: (MonadIO m, MonadError String m, TensorScalar a,
+                 Shape (Dim n1), Shape (Dim n2))
+             => Dim n1
+             -> Dim n2
+             -> Pipe (V.Vector a, V.Vector a) (Tensor n1 a, Tensor n2 a) m ()
+batch_to_gpu shp1 shp2 = forever $ do
   (batch, labels) <- await
-  yield (fromVector batch, fromVector labels)
+  tbatch <- fromVector shp1 batch
+  tlabels <- fromVector shp2 labels
+  yield (tbatch, tlabels)
 
 -- serializes inputs
 runEvery :: (Monad m) => Int -> (a -> m ()) -> Pipe a a m c
@@ -222,7 +228,7 @@ random_crop :: forall i l m . (Image i, Storable (ImagePixel i), MonadRandom m)
             => Proxy i -> Int -> Int -> Pipe (Manifest (ImagePixel i), l) (Manifest (ImagePixel i), l) m ()
 random_crop _ width height = forever $ do
   (img,l) <- await
-  let Z :. imgHeight :. imgWidth = Friday.shape img
+  let VP.Z VP.:. imgHeight VP.:. imgWidth = Friday.shape img
   if (imgWidth < width || imgHeight < height)
    then error $ "Image too small for cropping:\nimage size: " ++ show (imgHeight,imgWidth) ++ "\ncrop size: " ++ show (height,width)
    else do
