@@ -6,8 +6,9 @@ module DeepBanana.Layer.CUDA.CuRAND (
   , logNormal
   ) where
 
-import qualified Foreign.CUDA.CuRAND as CuRAND
+import Control.Exception
 import Data.Proxy
+import qualified Foreign.CUDA.CuRAND as CuRAND
 
 import DeepBanana.Layer
 import DeepBanana.Layer.CUDA.Monad
@@ -25,7 +26,8 @@ dropout drop_proba = noWeights fwdbwd
   -- and backward pass.
   where fwdbwd inp = do
           gen <- asks generator
-          mask <- liftIO $ dropoutMaskIO gen (shape inp) drop_proba
+          mask <- liftIO $ do
+            dropoutMaskIO gen (shape inp) drop_proba
           pure_mask <- unsafeFreeze mask
           return (inp * pure_mask, \upgrad -> upgrad * pure_mask)
 

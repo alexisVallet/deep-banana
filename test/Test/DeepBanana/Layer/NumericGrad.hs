@@ -79,7 +79,7 @@ instance ToTensor CDouble where
   fromTensor (t,_) = head $ toList t
 
 instance (TensorScalar a) => ToTensor (HLSpace a '[]) where
-  toTensor _ = (fromList (0:.Z) [],EmptyShape)
+  toTensor _ = (fromList (0:.Z) [], EmptyShape)
   fromTensor _ = HLS HNil
 
 instance forall a e l

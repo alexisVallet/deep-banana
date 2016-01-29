@@ -261,7 +261,7 @@ bin_broadcast_err t1 t2 = case bin_broadcast t1 t2 of
 
 instance forall a n . (Shape (Dim n), TensorScalar a)
          => Num (Tensor n a) where
-  _t1 + _t2 = let (t1,t2) = bin_broadcast_err t1 t2 in unsafePerformIO $ do
+  _t1 + _t2 = let (t1,t2) = bin_broadcast_err _t1 _t2 in unsafePerformIO $ do
       t1' <- unsafeThaw t1
       t2' <- unsafeThaw t2
       t3' <- MT.copy t2'
@@ -269,7 +269,7 @@ instance forall a n . (Shape (Dim n), TensorScalar a)
         MT.withDevicePtr t3' $ \t3ptr -> do
           MT.rawAdd t1ptr t3ptr $ fromIntegral $ size $ shape t1
       unsafeFreeze t3'
-  _t1 * _t2 = let (t1,t2) = bin_broadcast_err t1 t2 in unsafePerformIO $ do
+  _t1 * _t2 = let (t1,t2) = bin_broadcast_err _t1 _t2 in unsafePerformIO $ do
       t1' <- unsafeThaw t1
       t2' <- unsafeThaw t2
       t3' <- MT.copy t2'
@@ -277,7 +277,7 @@ instance forall a n . (Shape (Dim n), TensorScalar a)
         MT.withDevicePtr t3' $ \t3ptr -> do
           MT.rawMul t1ptr t3ptr $ fromIntegral $ size $ shape t1
       unsafeFreeze t3'
-  _t1 - _t2 = let (t1,t2) = bin_broadcast_err t1 t2 in unsafePerformIO $ do
+  _t1 - _t2 = let (t1,t2) = bin_broadcast_err _t1 _t2 in unsafePerformIO $ do
       t1' <- unsafeThaw t1
       t2' <- unsafeThaw t2
       t3' <- MT.copy t2'

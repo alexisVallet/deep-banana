@@ -176,7 +176,7 @@ test_replicateAsCols = describe "DeepBanana.Layer.CUDA.replicateAsCols" $ do
   it "has a backward pass close to the numerical backward pass" $ do
     check_backward (replicateAsCols 5) (return $ HLS $ HNil)
       (normal (56:.Z) 0 0.1 :: CUDA (Tensor 1 CFloat))
-      (normal (56:.6:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat))
+      (normal (56:.5:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat))
 
 test_log :: Spec
 test_log = describe "DeepBanana.Layer.CUDA.log" $ do
