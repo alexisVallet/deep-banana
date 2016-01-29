@@ -9,6 +9,7 @@ module DeepBanana.Data (
   , runEvery
   , serializeTo
   , random_crop
+  , resize_min_dim
   ) where
 
 import Foreign.C
@@ -150,12 +151,10 @@ shuffle xs = do
       NSV.unsafeFreeze ar
   return $ NSV.toList ar
 
-randomize :: (MonadIO m, MonadRandom m) => [a] -> (a -> m b) -> Producer b m ()
-randomize xs f = do
+randomize :: (MonadRandom m) => [a] -> Producer a m ()
+randomize xs = do
   sxs <- lift $ shuffle xs
-  forM_ sxs $ \x -> do
-    fx <- lift $ f x
-    yield fx
+  forM_ sxs yield
 
 -- Converts an image to a storable-based vector by casting and sharing the inner
 -- data foreign pointer.
@@ -237,3 +236,17 @@ random_crop _ width height = forever $ do
     let croppedImg = crop (Rect ix iy width height) img :: Manifest (ImagePixel i)
     cropRes <- computeP croppedImg
     yield (cropRes, l)
+
+resize_min_dim :: forall i l m
+               . (Image i, Storable (ImagePixel i), MonadRandom m,
+                  Integral (ImageChannel i), Interpolable (ImagePixel i))
+               => Proxy i -> Int -> Pipe (Manifest (ImagePixel i), l) (Manifest (ImagePixel i), l) m ()
+resize_min_dim _ min_dim = forever $ do
+  (img,l) <- await
+  let VP.Z VP.:. imgHeight VP.:. imgWidth = Friday.shape img
+      size = if imgHeight > imgWidth
+             then ix2 (round (realToFrac (imgHeight * min_dim) / realToFrac imgWidth :: Double)) min_dim
+             else ix2 min_dim (round (realToFrac (imgWidth * min_dim) / realToFrac imgHeight :: Double))
+      resizedImg = resize TruncateInteger size img :: Manifest (ImagePixel i)
+  resizedImgRes <- computeP resizedImg
+  yield (resizedImgRes, l)
