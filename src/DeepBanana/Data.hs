@@ -115,8 +115,8 @@ while pred action = do
     return (x:xs)
   else return []
 
-lazy_image_loader :: forall i m . (Image i, Convertible StorageImage i, Storable (ImagePixel i), MonadIO m)
-                  => Proxy i -> FilePath -> Pipe (FilePath, [Int]) (Manifest (ImagePixel i), [Int]) m ()
+lazy_image_loader :: forall i m l . (Image i, Convertible StorageImage i, Storable (ImagePixel i), MonadIO m)
+                  => Proxy i -> FilePath -> Pipe (FilePath, l) (Manifest (ImagePixel i), l) m ()
 lazy_image_loader _ directory = forever $ do
   (fpath, labels) <- await
   eimg <- liftIO $

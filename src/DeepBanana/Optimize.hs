@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 module DeepBanana.Optimize (
     sgd
   , VanillaT
@@ -6,6 +7,9 @@ module DeepBanana.Optimize (
   , MomentumT
   , momentum
   , runMomentum
+  , RMSPropT
+  , rmsprop
+  , runRMSProp
   ) where
 import Control.Monad.Morph
 import Control.Monad.Trans
@@ -16,6 +20,9 @@ import Data.VectorSpace
 
 import Pipes
 import Pipes.Lift
+
+import DeepBanana.Layer
+import DeepBanana.Tensor
 
 sgd :: (Monad m, MonadTrans t, Monad (t (Pipe a (Scalar w, w) m)), Monad (t m), MFunctor t, VectorSpace w)
     => (Scalar w -> w -> w -> t m w) -- update function
@@ -90,3 +97,52 @@ momentum cost grad w_t = do
   let dt = mf *^ dtm1 ^-^ lr *^ grad
   modify (\st -> st {mPreviousUpdate = dt})
   return $ w_t ^+^ dt
+
+data RMSPropState s w = RMSPropState {
+  rmsqr :: HLSpace s w
+  }
+
+data RMSPropReader s = RMSPropReader {
+    rmsqrFactor :: s
+  , rlearningRate :: s
+  , rminNorm :: s
+  }
+
+type RMSPropT s w = RWST (RMSPropReader s) () (RMSPropState s w)
+
+runRMSProp :: (Monad m, AdditiveGroup (HLSpace s w), Fractional s,
+               Scalar (HLSpace s w) ~ s)
+           => s -> s -> s -> RMSPropT s w m a -> m a
+runRMSProp learningRate msqrFactor maxRate action = do
+  (x,_,_) <- runRWST
+             action
+             (RMSPropReader msqrFactor learningRate (learningRate / maxRate))
+             (RMSPropState zeroV)
+  return x
+
+class HLElemwiseMax s w where
+  hlElemwiseMax :: HLSpace s w -> HLSpace s w -> HLSpace s w
+
+instance HLElemwiseMax s '[] where
+  hlElemwiseMax _ _ = HLS HNil
+
+instance forall s w n
+         . (TensorScalar s, HLElemwiseMax s w, Scalar (HLSpace s w) ~ s, Shape (Dim n))
+         => HLElemwiseMax s (Tensor n s ': w) where
+  hlElemwiseMax (HLS (HCons t1 w1)) (HLS (HCons t2 w2)) =
+    let t = case elementwiseMax t1 t2 of 
+              Left err -> error $ "Couldn't compute elementwise max: " ++ err
+              Right out -> out in
+    HLS $ HCons t (unHLS (hlElemwiseMax (HLS w1) (HLS w2) :: HLSpace s w))
+
+rmsprop :: (VectorSpace (HLSpace s w), Monad m, HLElemwiseMax s w, Real s,
+            Scalar (HLSpace s w) ~ s, Floating (HLSpace s w))
+        => s -> HLSpace s w -> HLSpace s w -> RMSPropT s w m (HLSpace s w)
+rmsprop cost grad w_t = do
+  lr <- asks rlearningRate
+  msqr_t <- gets rmsqr
+  msqrFact <- asks rmsqrFactor
+  minNorm' <- asks rminNorm
+  let new_msqr = (msqrFact *^ msqr_t) + ((1 - msqrFact) *^ (grad * grad))
+  modify (\s -> s {rmsqr = new_msqr})
+  return $ w_t - lr *^ (grad / hlElemwiseMax (sqrt new_msqr) (realToFrac minNorm'))
