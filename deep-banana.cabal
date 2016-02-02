@@ -87,21 +87,31 @@ test-suite deep-banana-test
                      , FlexibleContexts
                      , FlexibleInstances
 
--- executable example-mnist
---   hs-source-dirs:      examples/mnist/
---   main-is:             Main.hs
---   default-language:    Haskell2010
---   build-depends:       base >= 4.7 && < 5
---                      , hnn >= 0.1 && < 0.2
---                      , filepath >= 1.3 && < 1.4
---                      , pipes >= 4.1 && < 4.2
---                      , friday >= 0.2 && < 0.3
---                      , vector-space >= 0.9 && < 0.10
---                      , vector >= 0.10 && < 0.11
---                      , directory >= 1.2 && < 1.3
---                      , leveldb-haskell >= 0.6
---                      , resourcet >= 1.1
---   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+executable example-mnist
+  hs-source-dirs:      examples/mnist/
+  main-is:             Main.hs
+  other-modules:       MNIST
+  default-language:    Haskell2010
+  build-depends:       base >= 4.7
+                     , deep-banana >= 0.1
+                     , pipes >= 4.1
+                     , filepath >= 1.3
+                     , parsec >= 3.1
+                     , bytestring >= 0.10
+                     , mtl >= 2.1
+                     , wreq >= 0.4
+                     , directory >= 1.2
+                     , network-uri >= 2.6
+                     , friday >= 0.2
+                     , friday-devil >= 0.1
+                     , zlib >= 0.6
+                     , lens >= 4.13
+                     , attoparsec >= 0.13
+                     , binary >= 0.7
+                     , vector >= 0.11
+                     , HList >= 0.4
+                     , deepseq >= 1.3
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
 
 source-repository head
   type:     git

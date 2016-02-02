@@ -1,111 +1,120 @@
-{-# LANGUAGE BangPatterns, TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts, DataKinds #-}
 module Main where
 
-import Control.Category
-import Prelude hiding ((.), log)
-import Foreign.C
-import System.FilePath
-import qualified Vision.Image as F hiding (mean)
+import qualified Data.Vector.Storable as V
+import Data.HList.HList
+import Data.Maybe
+import Data.Word
+import DeepBanana hiding (load_mnist)
+import DeepBanana.Layer.CUDA
+import Control.DeepSeq
+import Control.Monad
+import Control.Monad.Except
+import Control.Monad.State
+import Control.Monad.Trans
+import MNIST
 import Pipes
 import qualified Pipes.Prelude as P
-import Control.Monad
-import Data.VectorSpace
-import Data.List
+import Prelude hiding ((.), id)
+import System.FilePath
 import System.Mem
-import System.Directory
-import qualified Data.Vector.Storable as V
-import qualified Database.LevelDB as LDB
-import Control.Monad.Trans.Resource
-
-import HNN as HNN
-
-mean :: (TensorDataType a) => Tensor a -> a
-mean t = (sum $ toList t) / (fromIntegral $ product $ shape t)
-
-std :: (TensorDataType a, Real a) => Tensor a -> a
-std t = let m = mean t in
-  sqrt $ (sum $ fmap (\x -> (x - m)**2) $ toList t) / (fromIntegral $ product $ shape t)
-
-print_stats :: (VectorSpace w, CFloat ~ Scalar w, MonadIO m)
-            => Consumer (CFloat,w) m ()
-print_stats = forever $ do
-  liftIO $ putStrLn "Waiting for weights..."
-  (cost, w) <- await
-  liftIO $ performGC
-  liftIO $ do
-    putStrLn $ "Current cost: " ++ show cost
-  return ()
-
-print_info :: String -> Tensor CFloat -> GPU ()
-print_info name t = liftIO $ do
-  putStrLn $ name ++ ": " ++ show t
-  putStrLn $ name ++ ": mean " ++ show (mean t) ++ ", std " ++ show (std t)
-  putStrLn $ name ++ ": min " ++ show (minimum $ toList t) ++ ", max " ++ show (maximum $ toList t)
-
-grey_to_float :: (Integral a) => a -> CFloat
-grey_to_float i = (fromIntegral i - 128) / 255
-
-he_init :: [Int] -> CFloat -> GPU (Tensor CFloat)
-he_init shp fan_in = normal 0 (1 / sqrt fan_in) shp
+import Vision.Image
+import Vision.Image.Storage.DevIL
 
 main :: IO ()
 main = do
-  -- Attempts to load the leveldb for mnist.
-  -- Populates it if doesn't exist.
-  let train_ldb_path = "data" </> "mnist" </> "train_ldb"
-      test_ldb_path = "data" </> "mnist" </> "test_ldb"
-      train_img_path = "data" </> "mnist" </> "train"
-      test_img_path = "data" </> "mnist" </> "test"
-  putStrLn "Building training data leveldb if not existing..."
-  runResourceT $ runEffect
-    $ (load_mnist_lazy train_img_path :: Producer (F.Grey, Int) (ResourceT IO) ())
-    >-> makeleveldb train_ldb_path Nothing
-  putStrLn "Building test data leveldb if not existing..."
-  runResourceT $ runEffect
-    $ (load_mnist_lazy test_img_path :: Producer (F.Grey, Int) (ResourceT IO) ())
-    >-> makeleveldb test_img_path Nothing
-  mnist_train <- runResourceT $ LDB.open train_ldb_path LDB.defaultOptions
-  mnist_test <- runResourceT $ LDB.open test_ldb_path LDB.defaultOptions
-  let batch_size = 128
-      convLayer = convolution2d convolution_fwd_algo_implicit_gemm (1,1) (1,1) (1,1)
-                  >+> activation activation_relu
-                  >+> pooling2d pooling_max (2,2) (1,1) (2,2)
-      fcLayer = lreshape [batch_size,64*4]
-                >+> linear
-                >+> lreshape [batch_size,10,1,1]
-                >+> activation activation_relu
+  let train_images_url = "http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz"
+      train_labels_url = "http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz"
+      test_images_url = "http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz"
+      test_labels_url = "http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz"
+      mnist_dir = "data" </> "mnist"
+      train_images_file = mnist_dir </> "train-images.ubyte.gz"
+      train_labels_file = mnist_dir </> "train-labels.ubyte.gz"
+      test_images_file = mnist_dir </> "test-images.ubyte.gz"
+      test_labels_file = mnist_dir </> "test-labels.ubyte.gz"
+      nb_labels = 10
+      batch_size = 32
+  emnist_train <- runExceptT $ P.toListM
+                  $ load_mnist (Just train_images_url) (Just train_labels_url)
+                  train_images_file train_labels_file
+  emnist_val <- runExceptT $ P.toListM
+                $ load_mnist (Just test_images_url) (Just test_labels_url)
+                test_images_file test_labels_file
+  case pure (,) <*> emnist_train <*> emnist_val of
+   Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
+   Right (mnist_train,mnist_val) -> do
+     runCUDA 42 $ do
+       w_0 <- init_weights nb_labels
+       let
+         nb_val_batches = fromIntegral $ (length mnist_val `div` batch_size)
+         preprocessing =
+           P.map (\(i,l) -> (i, [l]))
+           >-> batch_images nb_labels batch_size
+           >-> P.map (\(b,l) -> (V.map grey_to_float b, l))
+           >-> batch_to_gpu (batch_size:.1:.28:.28:.Z) (batch_size:.nb_labels:.Z)
+         validate (_,w_t) = do
+           liftIO $ putStrLn "Computing validation cost..."
+           sum_cost <- P.sum $ forM_ mnist_val yield
+                       >-> preprocessing
+                       >-> P.mapM (fmap fst . cost_grad batch_size nb_labels w_t)
+           liftIO $ putStrLn $ "Validation cost: " ++ show (sum_cost / nb_val_batches)
+       runEffect
+         $ forever (randomize mnist_train)
+         >-> preprocessing
+         >-> runMomentum 0.001 0.9 (sgd momentum (cost_grad batch_size nb_labels) w_0)
+         >-> runEvery 100 (\x -> deepseq x $ liftIO $ performGC)
+         >-> runEvery 1000 validate
+         >-> print_info
+
+cost_grad batch_size nb_labels w_t (batch,labels) = do
+  let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
+             >+> activation activation_relu
+      pool = pooling2d (2,2) (1,1) (2,2) pooling_max
+      pool_avg = pooling2d (3,3) (1,1) (3,3) pooling_average_count_include_padding
       nnet =
-        transformTensor nhwc nchw
-        >+> convLayer
-        >+> convLayer
-        >+> convLayer
-        >+> convLayer
-        >+> fcLayer
-        >+> lreshape [batch_size,10]
-      input_shape = [batch_size,1,28,28]
-      cost_grad w (batch, labels) = do
-        let fullNet = nnet >+> mlrCost batch_size 10 -< labels
-        (cost, bwd) <- lift $ forwardBackward fullNet (w,batch)
-        let (w',_) = bwd 1
-        return $ (cost, w')
-  runGPU 42 $ do
-    conv_w1 <- he_init [8,1,3,3] (3*3)
-    conv_w2 <- he_init [16,8,3,3] (3*3*8)
-    conv_w3 <- he_init [32,16,3,3] (3*3*16)
-    conv_w4 <- he_init [64,32,3,3] (3*3*32)
-    fc_w <- normal 0 (1/ sqrt (64*4)) [64*4,10]
-    let init_weights =
-          HLS $ conv_w1 `HCons` conv_w2 `HCons` conv_w3 `HCons` conv_w4 `HCons` fc_w `HCons` HNil
-    runResourceT $ runEffect $
-      (leveldb_random_loader mnist_train :: Producer (F.Grey, [Int]) (ResourceT GPU) ())
-      >-> batch_images 10 batch_size
-      >-> P.map (\(b,bs,l,ls) -> (V.map (\p -> (fromIntegral p - 128) / 255 :: CFloat) b,
-                                  bs,l,ls))
-      >-> batch_to_gpu
-      >-> runMomentum 0.01 0.9 (sgd momentum cost_grad init_weights)
-      >-> runEvery 10 (\(c,w) -> do
-                          liftIO $ putStrLn "saving..."
-                          serializeTo ("data" </> "mnist" </> "model") w)
-      >-> P.take 20000
-      >-> print_stats
-  return ()
+            conv
+        >+> pool -- 14*14
+        >+> conv
+        >+> pool -- 7*7
+        >+> conv
+        >+> pool -- 3*3
+        >+> conv
+        >+> pool_avg -- 1*1
+        >+> lreshape (batch_size:.nb_labels:.Z)
+        >+> mlrCost (batch_size:.nb_labels:.Z) -< labels
+        >+> toScalar
+  (cost, bwd) <- forwardBackward nnet w_t batch
+  let (w', _) = bwd (1 :: CFloat)
+  return (cost, w')
+
+init_weights nb_labels = do
+  let he_init s@(_:.c:.fh:.fw:.Z) =
+        normal s 0 (sqrt (2 / (fromIntegral c * fromIntegral fh * fromIntegral fw)))
+        :: CUDA (Tensor 4 CFloat)
+  x <- pure hBuild
+       <*> he_init (32:.1:.3:.3:.Z)
+       <*> he_init (64:.32:.3:.3:.Z)
+       <*> he_init (128:.64:.3:.3:.Z)
+       <*> he_init (10:.128:.3:.3:.Z)
+  return $ HLS $ hEnd x
+
+grey_to_float :: Word8 -> CFloat
+grey_to_float i = (fromIntegral i - 128) / 255
+
+-- Printing the current optimization state.
+data InfoState = InfoState {
+  rolling_cost :: Maybe CFloat
+  }
+
+print_info = flip evalStateT (InfoState Nothing) $ forM_ [1..] $ \i -> do
+  (cost, weights) <- lift $ await
+  roll_cost <- do
+    mcur_roll_cost <- gets rolling_cost
+    case mcur_roll_cost of
+     Nothing -> modify (\s -> s {rolling_cost = Just cost})
+     Just cur_roll_cost ->
+       modify (\s -> s {rolling_cost = Just $ cur_roll_cost * 0.9 + cost * 0.1})
+    fmap fromJust $ gets rolling_cost
+  when (i `rem` 50 == 0) $ do
+    liftIO $ putStrLn $ "Iteration " ++ show i
+      ++ " cost rolling average: " ++ show roll_cost
