@@ -9,8 +9,38 @@ import Data.VectorSpace
 import GHC.TypeLits
 import Data.Proxy
 import Unsafe.Coerce
+import Test.Hspec
 
 import DeepBanana
+
+allClose :: (TensorScalar a, Ord a, Shape (Dim n)) => Tensor n a -> Tensor n a -> Bool
+allClose t1 t2 =
+  all (\(x1,x2) -> abs (x1 - x2) / (abs x1 + abs x2) < 0.1)
+  $ zip (toList t1) (toList t2)
+
+check_backward :: (Monad m, TensorScalar a, Ord a, Show a,
+                   Show inp, Show (HLSpace a w), Show out, ToTensor inp,
+                   ToTensor (HLSpace a w), ToTensor out, Scalar out ~ a,
+                   Scalar (HLSpace a w) ~ a, Scalar inp ~ a)
+               => Layer m a w inp out
+               -> m (HLSpace a w)
+               -> m inp
+               -> m out
+               -> m Expectation
+check_backward layer weights input upgrad = do
+  x <- input
+  y <- upgrad
+  w <- weights
+  num_x' <- genericNumericBwd (\(w1,x1) -> forward layer w1 x1) (w,x) y
+  analytic_x' <- backward layer w x y
+  let (t_num_x',_) = toTensor num_x'
+      (t_analytic_x',_) = toTensor analytic_x'
+  if (not $ allClose t_num_x' t_analytic_x')
+    then return $
+    expectationFailure
+    $ "Numeric and analytic gradient do not match:\nNumeric: "
+    ++ show num_x' ++ "\nAnalytic: " ++ show analytic_x'
+    else return $ return ()
 
 numericBwd :: (TensorScalar a, Shape (Dim n), Shape (Dim k), Monad m)
            => (Tensor n a -> m (Tensor k a))

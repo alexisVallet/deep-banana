@@ -22,6 +22,7 @@ library
                      , DeepBanana.Layer.CUDA.Cublas
                      , DeepBanana.Layer.CUDA.CuRAND
                      , DeepBanana.Layer.CUDA.Numeric
+                     , DeepBanana.Layer.Recurrent
                      , DeepBanana.Tensor
                      , DeepBanana.Tensor.TensorScalar
                      , DeepBanana.Tensor.Shape
