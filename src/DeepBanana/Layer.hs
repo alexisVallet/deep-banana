@@ -52,14 +52,14 @@ newtype Layer m a (w :: [*]) inp out = Layer {
 -- | Runs the forward pass of a layer.
 forward :: (Monad m) => Layer m a w inp out -> HLSpace a w -> inp -> m out
 forward l w inp = do
-  (out, _) <- forwardBackward l w inp
+  ~(out, _) <- forwardBackward l w inp
   return out
 
 -- | Runs the backward pass of a layer.
 backward :: (Monad m)
          => Layer m a w inp out -> HLSpace a w -> inp -> out -> m (HLSpace a w, inp)
 backward l w inp upgrad = do
-  (out, bwd) <- forwardBackward l w inp
+  ~(out, bwd) <- forwardBackward l w inp
   return $ bwd upgrad
 
 -- | Creates a layer from separate forward pass and backward pass computations.
@@ -135,10 +135,10 @@ infixr 3 >+>
       => Layer m s w1 a b -> Layer m s w2 b c -> Layer m s (HAppendListR w1 w2) a c
 Layer fab >+> Layer fbc = Layer $ \w1w2 a -> do
   let (w1,w2) = hSplitAt (Proxy :: Proxy n) $ unHLS w1w2
-  (b, bwdab) <- fab (HLS w1) a
-  (c, bwdbc) <- fbc (HLS w2) b
-  return (c, \c' -> let (w2grad, bgrad) = bwdbc c'
-                        (w1grad, agrad) = bwdab bgrad in
+  ~(b, bwdab) <- fab (HLS w1) a
+  ~(c, bwdbc) <- fbc (HLS w2) b
+  return (c, \c' -> let ~(w2grad, bgrad) = bwdbc c'
+                        ~(w1grad, agrad) = bwdab bgrad in
                     (HLS $ hAppendList (unHLS w1grad) (unHLS w2grad), agrad))
 
 -- Making a layer out of a differentiable function that does not depend on a set
@@ -146,7 +146,7 @@ Layer fab >+> Layer fbc = Layer $ \w1w2 a -> do
 noWeights :: (Monad m)
           => (inp -> m (out, out -> inp)) -> Layer m a '[] inp out
 noWeights f = Layer $ \_ x -> do
-  (y, bwd) <- f x
+  ~(y, bwd) <- f x
   return (y, \y' -> (zeroV, bwd y'))
 
 -- Layer that runs an effectful computation on the input and passes it along

@@ -16,6 +16,7 @@ module DeepBanana.Layer.CUDA.CuDNN (
   , CuDNN.pooling_average_count_exclude_padding
   , nhwc_to_nchw
   , nchw_to_nhwc
+  , cudnnHandle
   ) where
 import Foreign
 import Foreign.C
@@ -27,121 +28,112 @@ import qualified Foreign.CUDA.CuDNN as CuDNN
 import Control.Exception
 import Control.Monad
 import Control.Monad.Primitive
+import Data.IORef
 import Unsafe.Coerce
 import GHC.TypeLits
 import Data.Proxy
 import Control.Monad.ST
+import System.IO.Unsafe
 
 import DeepBanana.Layer
-import DeepBanana.Layer.CUDA.Monad
 import DeepBanana.Tensor
 import qualified DeepBanana.Tensor.Mutable as MT
 import DeepBanana.Tensor.Mutable (MTensor, IOTensor, withDevicePtr, emptyTensor)
 
-convolution2d :: (TensorScalar a)
+convolution2d :: (Monad m, TensorScalar a)
               => (Int,Int)
               -> (Int,Int)
               -> CuDNN.ConvolutionFwdAlgo
-              -> Layer CUDA a '[Tensor 4 a] (Tensor 4 a) (Tensor 4 a)
+              -> Layer m a '[Tensor 4 a] (Tensor 4 a) (Tensor 4 a)
 convolution2d padding stride algo =
   combinePasses convfwd convbwd
   where convfwd (HLS (HCons filters HNil)) fmaps = do
-          handle <- asks cudnnHandle
           return $ runST $ do
             filters' <- unsafeThaw filters
             fmaps' <- unsafeThaw fmaps
-            convres <- convolution2dFwd handle padding stride algo fmaps' filters'
+            convres <- convolution2dFwd cudnnHandle padding stride algo fmaps' filters'
             unsafeFreeze convres
         convbwd (HLS (HCons filters HNil)) fmaps _ = do
-          handle <- asks cudnnHandle
           let bwdfilters upgrad = runST $ do
                 filters' <- unsafeThaw filters
                 fmaps' <- unsafeThaw fmaps
                 upgrad' <- unsafeThaw upgrad
-                filtersgrad <- convolution2dBwdFilters handle padding stride fmaps' filters' upgrad'
+                filtersgrad <- convolution2dBwdFilters cudnnHandle padding stride fmaps' filters' upgrad'
                 unsafeFreeze filtersgrad
               bwdinputs upgrad = runST $ do
                 filters' <- unsafeThaw filters
                 fmaps' <- unsafeThaw fmaps
                 upgrad' <- unsafeThaw upgrad
-                inputsgrad <- convolution2dBwdInputs handle padding stride fmaps' filters' upgrad'
+                inputsgrad <- convolution2dBwdInputs cudnnHandle padding stride fmaps' filters' upgrad'
                 unsafeFreeze inputsgrad
           return $ \upgrad -> (HLS $ bwdfilters upgrad `HCons` HNil, bwdinputs upgrad)
 
-activation :: (TensorScalar a)
+activation :: (Monad m, TensorScalar a)
            => CuDNN.ActivationMode
-           -> Layer CUDA a '[] (Tensor 4 a) (Tensor 4 a)
+           -> Layer m a '[] (Tensor 4 a) (Tensor 4 a)
 activation mode =
   combinePasses' actfwd actbwd
   where actfwd fmaps = do
-          handle <- asks cudnnHandle
           return $ runST $ do
             fmaps' <- unsafeThaw fmaps
-            activations <- activationFwd handle mode fmaps'
+            activations <- activationFwd cudnnHandle mode fmaps'
             unsafeFreeze activations
         actbwd inp out = do
-          handle <- asks cudnnHandle
           return $ \upgrad -> runST $ do
             inp' <- unsafeThaw inp
             out' <- unsafeThaw out
             upgrad' <- unsafeThaw upgrad
-            grad <- activationBwd handle mode inp' out' upgrad'
+            grad <- activationBwd cudnnHandle mode inp' out' upgrad'
             unsafeFreeze grad
 
 -- pooling
-pooling2d :: (TensorScalar a)
+pooling2d :: (Monad m, TensorScalar a)
           => (Int,Int)
           -> (Int,Int)
           -> (Int,Int)
           -> CuDNN.PoolingMode
-          -> Layer CUDA a '[] (Tensor 4 a) (Tensor 4 a)
+          -> Layer m a '[] (Tensor 4 a) (Tensor 4 a)
 pooling2d psize padding stride mode =
   combinePasses' poolfwd poolbwd
   where poolfwd fmaps = do
-          handle <- asks cudnnHandle
           return $ runST $ do
             fmaps' <- unsafeThaw fmaps
-            poolres <- pooling2dFwd handle psize padding stride mode fmaps'
+            poolres <- pooling2dFwd cudnnHandle psize padding stride mode fmaps'
             unsafeFreeze poolres
         poolbwd inp out = do
-          handle <- asks cudnnHandle
           return $ \upgrad -> runST $ do
             inp' <- unsafeThaw inp
             out' <- unsafeThaw out
             upgrad' <- unsafeThaw upgrad
-            grad <- pooling2dBwd handle psize padding stride mode inp' out' upgrad'
+            grad <- pooling2dBwd cudnnHandle psize padding stride mode inp' out' upgrad'
             unsafeFreeze grad
 
-nchw_to_nhwc :: (TensorScalar a)
-             => Layer CUDA a '[] (Tensor 4 a) (Tensor 4 a)
+nchw_to_nhwc :: (Monad m, TensorScalar a)
+             => Layer m a '[] (Tensor 4 a) (Tensor 4 a)
 nchw_to_nhwc = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
-          handle <- asks cudnnHandle
           return $ runST $ do
             mt <- unsafeThaw t
-            mt' <- nchw_to_nhwc' handle mt
+            mt' <- nchw_to_nhwc' cudnnHandle mt
             unsafeFreeze mt'
         bwdTrans _ _ = do
-          handle <- asks cudnnHandle
           return $ \upgrad -> runST $ do
             mu <- unsafeThaw upgrad
-            mu' <- nhwc_to_nchw' handle mu
+            mu' <- nhwc_to_nchw' cudnnHandle mu
             unsafeFreeze mu'
 
-nhwc_to_nchw :: (TensorScalar a)
-                => Layer CUDA a '[] (Tensor 4 a) (Tensor 4 a)
+nhwc_to_nchw :: (Monad m, TensorScalar a)
+                => Layer m a '[] (Tensor 4 a) (Tensor 4 a)
 nhwc_to_nchw = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
-          handle <- asks cudnnHandle
           return $ runST $ do
             mt <- unsafeThaw t
-            mt' <- nhwc_to_nchw' handle mt
+            mt' <- nhwc_to_nchw' cudnnHandle mt
             unsafeFreeze mt'
         bwdTrans _ _ = do
-          handle <- asks cudnnHandle
           return $ \upgrad -> runST $ do
             mu <- unsafeThaw upgrad
-            mu' <- nchw_to_nhwc' handle mu
+            mu' <- nchw_to_nhwc' cudnnHandle mu
             unsafeFreeze mu'
 
 -- Helper functions to deal with low-level boilerplate of CuDNN.
@@ -534,3 +526,17 @@ convolutionBackwardBias handle upgrad = unsafePrimToPrim $ do
           CuDNN.convolutionBackwardBias handle alpha upgraddesc upgradptr
           beta biasgraddesc biasgradptr
   return $ unsafeCoerce biasgrad
+
+global_cudnn_handle :: IORef (Maybe CuDNN.Handle)
+{-# NOINLINE global_cudnn_handle #-}
+global_cudnn_handle = unsafePerformIO $ newIORef Nothing
+
+cudnnHandle :: CuDNN.Handle
+cudnnHandle = unsafePerformIO $ do
+  mh <- readIORef global_cudnn_handle
+  case mh of
+   Nothing -> do
+     h <- alloca $ \hptr -> CuDNN.createHandle hptr >> peek hptr
+     writeIORef global_cudnn_handle $ Just h
+     return h
+   Just h -> return h

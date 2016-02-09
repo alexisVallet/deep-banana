@@ -6,6 +6,7 @@ module DeepBanana.Layer.CUDA.Cublas (
   , sumRows
   , replicateAsRows
   , replicateAsCols
+  , cublasHandle
   ) where
 
 import qualified Foreign.CUDA.Cublas as Cublas
@@ -14,143 +15,134 @@ import Control.Monad.Primitive
 import Control.Monad.ST
 import Control.Monad.Trans
 import Data.Proxy
+import Data.IORef
 import GHC.TypeLits
 import Prelude hiding (id, (.))
+import System.IO.Unsafe
 import Unsafe.Coerce
 
 import DeepBanana.Tensor
 import DeepBanana.Tensor.Mutable (MTensor, IOTensor)
 import qualified DeepBanana.Tensor.Mutable as MT
 import DeepBanana.Layer
-import DeepBanana.Layer.CUDA.Monad
 
 -- linear layer
-dot :: (TensorScalar a)
-    => Layer CUDA a '[] (Tensor 2 a,Tensor 2 a) (Tensor 2 a)
+dot :: (MonadError String m, TensorScalar a)
+    => Layer m a '[] (Tensor 2 a,Tensor 2 a) (Tensor 2 a)
 dot = combinePasses' fwddot bwddot
   where fwddot (x,w) = do
           let n :. m :. Z = shape x
               m' :. k :. Z = shape w
           when (m /= m') $ throwError $
             "Incompatible shapes " ++ show (shape x) ++ " and " ++ show (shape w) ++ " for dot product."
-          handle <- asks cublasHandle
           return $ runST $ do
             mw <- unsafeThaw w
             mx <- unsafeThaw x
             out <- MT.emptyTensor $ n :. k :. Z
-            gemmFwd handle Cublas.N Cublas.N 1 mx mw 0 out
+            gemmFwd cublasHandle Cublas.N Cublas.N 1 mx mw 0 out
             unsafeFreeze out
         bwddot (x,w) _ = do
-          handle <- asks cublasHandle
           return $ \upgrad -> runST $ do
             mw <- unsafeThaw w
             mx <- unsafeThaw x
             mupgrad <- unsafeThaw upgrad
             mx' <- MT.emptyTensor $ shape x
             mw' <- MT.emptyTensor $ shape w
-            gemmBwdA handle Cublas.N Cublas.N 1 mw mupgrad mx'
-            gemmBwdB handle Cublas.N Cublas.N 1 mx mupgrad mw'
+            gemmBwdA cublasHandle Cublas.N Cublas.N 1 mw mupgrad mx'
+            gemmBwdB cublasHandle Cublas.N Cublas.N 1 mx mupgrad mw'
             x' <- unsafeFreeze mx'
             w' <- unsafeFreeze mw'
             return (x', w')
 
-linear :: (TensorScalar a)
-       => Layer CUDA a '[Tensor 2 a] (Tensor 2 a) (Tensor 2 a)
+linear :: (MonadError String m, TensorScalar a)
+       => Layer m a '[Tensor 2 a] (Tensor 2 a) (Tensor 2 a)
 linear = Layer $ \(HLS (HCons w HNil)) x -> do
   (y, bwd) <- forwardBackward dot (HLS HNil) (x,w)
   return (y, \y' -> let (_, (x',w')) = bwd y'
                     in (HLS $ HCons w' HNil, x'))
 
 -- matrix sum reductions
-sumCols :: (TensorScalar a)
-        => Layer CUDA a '[] (Tensor 2 a) (Tensor 1 a)
+sumCols :: (Monad m, TensorScalar a)
+        => Layer m a '[] (Tensor 2 a) (Tensor 1 a)
 sumCols = combinePasses' fwdsumcols bwdsumcols
   where fwdsumcols x = do
-          handle <- asks cublasHandle
           return $ runST $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ 1 :. m :. Z
             mx <- unsafeThaw x
-            gemmFwd handle Cublas.N Cublas.N 1 ones mx 0 out
+            gemmFwd cublasHandle Cublas.N Cublas.N 1 ones mx 0 out
             fout <- unsafeFreeze out
             return $ unsafeReshape (m:.Z) fout
         bwdsumcols x _ = do
-          handle <- asks cublasHandle
           return $ \upgrad -> runST $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ shape x
             mupgrad <- fmap (MT.unsafeReshape $ 1 :. m :. Z) $ unsafeThaw upgrad
-            gemmBwdB handle Cublas.N Cublas.N 1 ones mupgrad out
+            gemmBwdB cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
             unsafeFreeze out
 
-sumRows :: (TensorScalar a)
-        => Layer CUDA a '[] (Tensor 2 a) (Tensor 1 a)
+sumRows :: (Monad m, TensorScalar a)
+        => Layer m a '[] (Tensor 2 a) (Tensor 1 a)
 sumRows = combinePasses' fwdsumrows bwdsumrows
   where fwdsumrows x = do
-          handle <- asks cublasHandle
           return $ runST $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ m :. 1 :. Z
             out <- MT.emptyTensor $ n :. 1 :. Z
             mx <- unsafeThaw x
-            gemmFwd handle Cublas.N Cublas.N 1 mx ones 0 out
+            gemmFwd cublasHandle Cublas.N Cublas.N 1 mx ones 0 out
             fmap (unsafeReshape $ n :. Z) $ unsafeFreeze out
         bwdsumrows x _ = do
-          handle <- asks cublasHandle
           return $ \upgrad -> runST $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ m :. 1 :. Z
             out <- MT.emptyTensor $ shape x
             mupgrad <- fmap (MT.unsafeReshape $ n :. 1 :. Z) $ unsafeThaw upgrad
-            gemmBwdA handle Cublas.N Cublas.N 1 ones mupgrad out
+            gemmBwdA cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
             unsafeFreeze out
 
-replicateAsRows :: (TensorScalar a)
+replicateAsRows :: (Monad m, TensorScalar a)
                 => Int
-                -> Layer CUDA a '[] (Tensor 1 a) (Tensor 2 a)
+                -> Layer m a '[] (Tensor 1 a) (Tensor 2 a)
 replicateAsRows n = combinePasses' fwdRepRows bwdRepRows
   where fwdRepRows x = do
-          handle <- asks cublasHandle
           return $ runST $ do
             let m :. Z = shape x
             ones <- MT.ones $ n :. 1 :. Z
             out <- MT.emptyTensor $ n :. m :. Z
             mx <- fmap (MT.unsafeReshape $ 1 :. m :. Z) $ unsafeThaw x
-            gemmFwd handle Cublas.N Cublas.N 1 ones mx 0 out
+            gemmFwd cublasHandle Cublas.N Cublas.N 1 ones mx 0 out
             unsafeFreeze out
         bwdRepRows x _ = do
-          handle <- asks cublasHandle
           return $ \upgrad -> runST $ do
             let m :. Z = shape x
             ones <- MT.ones $ n :. 1 :. Z
             out <- MT.emptyTensor $ 1 :. m :. Z
             mupgrad <- unsafeThaw upgrad
-            gemmBwdB handle Cublas.N Cublas.N 1 ones mupgrad out
+            gemmBwdB cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
             unsafeFreeze $ MT.unsafeReshape (m :. Z) out
 
-replicateAsCols :: (TensorScalar a)
+replicateAsCols :: (Monad m, TensorScalar a)
                 => Int
-                -> Layer CUDA a '[] (Tensor 1 a) (Tensor 2 a)
+                -> Layer m a '[] (Tensor 1 a) (Tensor 2 a)
 replicateAsCols n = combinePasses' fwdRepCols bwdRepCols
   where fwdRepCols x = do
-          handle <- asks cublasHandle
           return $ runST $ do
             let m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ m :. n :. Z
             mx <- fmap (MT.unsafeReshape $ m :. 1 :. Z) $ unsafeThaw x
-            gemmFwd handle Cublas.N Cublas.N 1 mx ones 0 out
+            gemmFwd cublasHandle Cublas.N Cublas.N 1 mx ones 0 out
             unsafeFreeze out
         bwdRepCols x _ = do
-          handle <- asks cublasHandle
           return $ \upgrad -> runST $ do
             let m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ m :. 1 :. Z
             mupgrad <- unsafeThaw upgrad
-            gemmBwdA handle Cublas.N Cublas.N 1 ones mupgrad out
+            gemmBwdA cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
             unsafeFreeze $ MT.unsafeReshape (m :. Z) out
 
 -- Utility functions leveraging CuBlas.
@@ -268,3 +260,17 @@ gemmBwdC handle beta upgrad out = unsafePrimToPrim $ do
     MT.withDevicePtr (unsafeCoerce out :: IOTensor 2 a) $ \outptr -> do
       Cublas.copy handle (size $ MT.shape upgrad) upgradptr 1 outptr 1
       Cublas.scal handle (size $ MT.shape out) beta outptr 1
+
+global_cublas_handle :: IORef (Maybe Cublas.Handle)
+{-# NOINLINE global_cublas_handle #-}
+global_cublas_handle = unsafePerformIO $ newIORef Nothing
+
+cublasHandle :: Cublas.Handle
+cublasHandle = unsafePerformIO $ do
+  mh <- readIORef global_cublas_handle
+  case mh of
+   Nothing -> do
+     h <- Cublas.create
+     writeIORef global_cublas_handle $ Just h
+     return h
+   Just h -> return h
