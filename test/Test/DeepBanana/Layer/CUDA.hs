@@ -30,22 +30,14 @@ test_cuda_layers = do
   test_mlrCost
   test_pooling2d
 
-runCUDAExp :: CULLong -> CUDA a -> IO a
-runCUDAExp seed action = do
-  case runCUDA seed action of
-   Left err -> do
-     expectationFailure $ "Error running a CUDA action: " ++ err
-     return undefined
-   Right res -> return res
-
 test_dropout :: Spec
 test_dropout = describe "DeepBanana.Layer.CUDA.dropout" $ do
   let input = fromList (1:.1:.8:.8:.Z) [1..8*8] :: Tensor 4 CFloat
   it "does nothing for drop_proba = 0" $ do
-    out <- runCUDAExp 42 $ forward (dropout 0) (HLS HNil) input
+    let out = runCUDA 42 $ forward (dropout 0) (HLS HNil) input
     toList out `shouldBe` toList input
   it "returns all zeros for drop_proba = 1" $ do
-    out <- runCUDAExp 42 $ forward (dropout 1) (HLS HNil) input
+    let out = runCUDA 42 $ forward (dropout 1) (HLS HNil) input
     toList out `shouldBe` (take (8*8) $ repeat 0)
 
 test_linear :: Spec
@@ -55,7 +47,7 @@ test_linear = describe "DeepBanana.Layer.CUDA.linear" $ do
       x = fromList (2:.2:.Z) [1,2,3,4] :: Tensor 2 CFloat
       y = fromList (2:.2:.Z) [5,6,7,8] :: Tensor 2 CFloat
       expected = [19,22,43,50] :: [CFloat]
-    actual <- runCUDAExp 42 $ forward linear (HLS $ HCons y HNil) x
+    let actual = runCUDA 42 $ forward linear (HLS $ HCons y HNil) x
     toList actual `shouldBe` expected
   it "has analytic gradient close to numeric gradient" $ do
     let x = normal (16:.5:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat)
@@ -63,15 +55,14 @@ test_linear = describe "DeepBanana.Layer.CUDA.linear" $ do
         w = do
           w' <- normal (5:.6:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat)
           return $ HLS $ HCons w' HNil
-    exp <- runCUDAExp 42 $ check_backward linear w x y
-    exp
+    runCUDA 42 $ check_backward linear w x y
 
 test_sumCols :: Spec
 test_sumCols = describe "DeepBanana.Layer.CUDA.sumCols" $ do
   let x = fromList (2:.2:.Z) [1,2,3,4] :: Tensor 2 CFloat
       expected = [4,6] :: [CFloat]
   it "returns the right result for a simple example" $ do
-    actual <- runCUDAExp 42 $ forward sumCols (HLS HNil) x
+    let actual = runCUDA 42 $ forward sumCols (HLS HNil) x
     toList actual `shouldBe` expected
 
 test_sumRows :: Spec
@@ -79,7 +70,7 @@ test_sumRows = describe "DeepBanana.Layer.CUDA.sumRows" $ do
   let x = fromList (2:.2:.Z) [1,2,3,4] :: Tensor 2 CFloat
       expected = [3,7] :: [CFloat]
   it "returns the right result for a simple example" $ do
-    actual <- runCUDAExp 42 $ forward sumRows (HLS HNil) x
+    let actual = runCUDA 42 $ forward sumRows (HLS HNil) x
     toList actual `shouldBe` expected
 
 test_convolution :: Spec
@@ -95,7 +86,7 @@ test_convolution = describe "DeepBanana.Layer.CUDA.convolution2d" $ do
         expected_out = fromList (1:.1:.3:.3:.Z) [6,  9,  8,
                                                  13, 20, 17,
                                                  12, 21, 14] :: Tensor 4 CFloat
-    actual <- runCUDAExp 42 $ forward conv (HLS $ HCons filter HNil) img
+    let actual = runCUDA 42 $ forward conv (HLS $ HCons filter HNil) img
     toList actual `shouldBe` toList expected_out
   it "has a correct backward pass" $ do
     let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
@@ -104,8 +95,7 @@ test_convolution = describe "DeepBanana.Layer.CUDA.convolution2d" $ do
         w = do
           w' <- normal (1:.1:.3:.3:.Z) 0 0.1 :: CUDA (Tensor 4 CFloat)
           return $ HLS $ w' `HCons` HNil
-    exp <- runCUDAExp 42 $ check_backward conv w x y
-    exp
+    runCUDA 42 $ check_backward conv w x y
 
 splitEvery :: Int -> [a] -> [[a]]
 splitEvery n [] = []
@@ -136,19 +126,18 @@ naive_mlrCost l x =
 test_softmax :: Spec
 test_softmax = describe "softmax" $ do
   it "CPU and CUDA naive softmaxes return the same results" $ do
-    (actual, expected) <- runCUDAExp 42 $ do
-      x <- normal (8:.8:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat)
-      act <- forward (softmax (8:.8:.Z)) (HLS HNil) x
-      return (act, naive_softmax x)
+    let (actual, expected) = runCUDA 42 $ do
+          x <- normal (8:.8:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat)
+          act <- forward (softmax (8:.8:.Z)) (HLS HNil) x
+          return (act, naive_softmax x)
     when (not $ allClose expected actual) $ do
       liftIO $ expectationFailure $
         "Naive and CUDA algorithm return different results:\nnaive: "
-        ++ show expected ++ "\ncudnn: " ++ show actual
+        ++ show expected ++ "\ncudnn: " ++ show actual :: IO ()
   it "has a numerically correct backward pass" $ do
-    exp <- runCUDAExp 42 $ check_backward (softmax (8:.8:.Z)) (return $ HLS HNil)
+   runCUDA 42 $ check_backward (softmax (8:.8:.Z)) (return $ HLS HNil)
            (normal (8:.8:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat))
            (normal (8:.8:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat))
-    exp
 
 test_replicateAsCols :: Spec
 test_replicateAsCols = describe "DeepBanana.Layer.CUDA.replicateAsCols" $ do
@@ -158,21 +147,19 @@ test_replicateAsCols = describe "DeepBanana.Layer.CUDA.replicateAsCols" $ do
                   3, 3, 3, 3, 3,
                   4, 4, 4, 4, 4]
   it "returns the right result for a simple example" $ do
-    actual <- runCUDAExp 42 $ forward (replicateAsCols 5) (HLS HNil) x
+    let actual = runCUDA 42 $ forward (replicateAsCols 5) (HLS HNil) x
     toList actual `shouldBe` expected
   it "has a backward pass close to the numerical backward pass" $ do
-    exp <- runCUDAExp 42 $ check_backward (replicateAsCols 5) (return $ HLS $ HNil)
+    runCUDA 42 $ check_backward (replicateAsCols 5) (return $ HLS $ HNil)
            (normal (56:.Z) 0 0.1 :: CUDA (Tensor 1 CFloat))
            (normal (56:.5:.Z) 0 0.1 :: CUDA (Tensor 2 CFloat))
-    exp
 
 test_log :: Spec
 test_log = describe "DeepBanana.Layer.CUDA.log" $ do
   it "has an analytic gradient close to the numeric gradient" $ do
     let x = uniform (8:.8:.Z) >>= return . (10E-5 +) :: CUDA (Tensor 2 CFloat)
         y = uniform (8:.8:.Z) >>= return . (10E-5 +) :: CUDA (Tensor 2 CFloat)
-    exp <- runCUDAExp 42 $ check_backward llog (return $ HLS HNil) x y
-    exp
+    runCUDA 42 $ check_backward llog (return $ HLS HNil) x y
 
 test_mlrCost :: Spec
 test_mlrCost = describe "DeepBanana.Layer.CUDA.mlrCost" $ do
@@ -187,14 +174,12 @@ test_mlrCost = describe "DeepBanana.Layer.CUDA.mlrCost" $ do
       x = fromList (8:.8:.Z) [1..8*8] :: Tensor 2 (CFloat)
       expected = naive_mlrCost labels x
   it "returns the same results as a naive CPU implementation" $ do
-    actual <- runCUDAExp 42 $ forward (mlrCost (8:.8:.Z) >+> toScalar) (HLS HNil) (labels,x)
+    let actual = runCUDA 42 $ forward (mlrCost (8:.8:.Z) >+> toScalar) (HLS HNil) (labels,x)
     actual `shouldBe` expected
   it "has an analytic gradient close to the numeric gradient" $ do
-    exp <- runCUDAExp 42 $ check_backward (mlrCost (8:.8:.Z)) (return $ HLS HNil) (return (labels,x)) (return 1)
-    exp
+    runCUDA 42 $ check_backward (mlrCost (8:.8:.Z)) (return $ HLS HNil) (return (labels,x)) (return 1)
 
 test_pooling2d :: Spec
 test_pooling2d = describe "DeepBanana.Layer.CUDA.pooling2d" $ do
   it "has an analytic gradient close to the numeric gradient" $ do
-    exp <- runCUDAExp 42 $ check_backward (pooling2d (2,2) (0,0) (2,2) pooling_max) (return $ HLS HNil) (normal (1:.1:.4:.4:.Z) 0 0.1 :: CUDA (Tensor 4 CFloat)) (normal (1:.1:.2:.2:.Z) 0 0.1 :: CUDA (Tensor 4 CFloat))
-    exp
+    runCUDA 42 $ check_backward (pooling2d (2,2) (0,0) (2,2) pooling_max) (return $ HLS HNil) (normal (1:.1:.4:.4:.Z) 0 0.1 :: CUDA (Tensor 4 CFloat)) (normal (1:.1:.2:.2:.Z) 0 0.1 :: CUDA (Tensor 4 CFloat))

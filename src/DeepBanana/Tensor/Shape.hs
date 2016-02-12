@@ -74,4 +74,3 @@ instance forall s . (Shape s) => Shape (SCons s) where
 type family Dim (n :: Nat) where
   Dim 0 = Z
   Dim n = SCons (Dim (n - 1))
-

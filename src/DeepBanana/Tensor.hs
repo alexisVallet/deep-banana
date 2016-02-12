@@ -87,14 +87,21 @@ instance (Shape (Dim n), TensorScalar a, Show a) => Show (Tensor n a) where
            ++ " "  ++ show (take 10 $ toList t)
 
 -- | Reshaping.
-reshape :: (Shape (Dim n1), Shape (Dim n2), MonadError String m)
+reshape :: (Shape (Dim n1), Shape (Dim n2), MonadError String m, TensorScalar a)
         => Dim n2 -> Tensor n1 a -> m (Tensor n2 a)
-reshape newshp (Tensor oldshp dataptr) = do
-  when (size newshp /= size oldshp) $ throwError $
-    "Couldn't reshape tensor from shape " ++ show oldshp ++ " to shape " ++ show newshp ++ ": incompatible sizes " ++ show (size oldshp) ++ " and " ++ show (size newshp)
-  return $ Tensor newshp dataptr
+reshape newshp t@(Tensor oldshp dataptr) = do
+  -- Dealing with the case of having a scalar initial tensor.
+  -- To be eventually replace by proper broadcasting, dealing with different number
+  -- of dimensions and all... Well probably reshaping will be rendered mostly
+  -- obsolete by good broadcasting anyway.
+  if size oldshp == 1
+    then return $ (head $ toList t) *^ ones newshp
+    else do
+    when (size newshp /= size oldshp) $ throwError $
+      "Couldn't reshape tensor from shape " ++ show oldshp ++ " to shape " ++ show newshp ++ ": incompatible sizes " ++ show (size oldshp) ++ " and " ++ show (size newshp)
+    return $ Tensor newshp dataptr
 
-unsafeReshape :: (Shape (Dim n1), Shape (Dim n2))
+unsafeReshape :: (Shape (Dim n1), Shape (Dim n2), TensorScalar a)
               => Dim n2 -> Tensor n1 a -> Tensor n2 a
 unsafeReshape newshp t = case reshape newshp t of
   Left err -> error err
@@ -206,7 +213,7 @@ tsplitAt t1sz t = do
     pure (,) <*> unsafeFreeze mt1 <*> unsafeFreeze mt2
 
 -- | Flattens a tensor into a 1-dimensional vector.
-flatten :: (Shape (Dim n)) => Tensor n a -> Tensor 1 a
+flatten :: (Shape (Dim n), TensorScalar a) => Tensor n a -> Tensor 1 a
 flatten t = case reshape (size (shape t) :. Z) t of
   Left err -> error $ "Couldn't flatten a tensor. This shouldn't happen.\n" ++ err
   Right res -> res

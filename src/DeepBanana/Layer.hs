@@ -14,6 +14,8 @@ module DeepBanana.Layer (
   , id'
   , (***)
   , (&&&)
+  , first
+  , second
   , terminal
   , (>+>)
   , (-<)
@@ -86,8 +88,8 @@ instance forall a (w :: [*]) m . (AdditiveGroup (HLSpace a w), Monad m)
          => Category (Layer m a w) where
   id = Layer (\w x -> return (x, \x' -> (zeroV, x')))
   Layer fbc . Layer fab = Layer $ \w a -> do
-    (b, bwdab) <- fab w a
-    (c, bwdbc) <- fbc w b
+    ~(b, bwdab) <- fab w a
+    ~(c, bwdbc) <- fbc w b
     return $ (c, \c' -> let (wgrad1,bgrad) = bwdbc c'
                             (wgrad2,agrad) = bwdab bgrad in
                         (wgrad1 ^+^ wgrad2, agrad))
@@ -102,8 +104,8 @@ infixr 4 ***
       -> Layer m s (HAppendListR w1 w2) (a,a') (b,b')
 Layer f1 *** Layer f2 = Layer $ \w1w2 (a,a') -> do
   let (w1,w2) = hSplitAt (Proxy :: Proxy n) $ unHLS w1w2
-  (b, bwd1) <- f1 (HLS w1) a
-  (b', bwd2) <- f2 (HLS w2) a'
+  ~(b, bwd1) <- f1 (HLS w1) a
+  ~(b', bwd2) <- f2 (HLS w2) a'
   return ((b,b'), \(bgrad,bgrad') -> let (w1grad, agrad) = bwd1 bgrad
                                          (w2grad, agrad') = bwd2 bgrad'
                                      in (HLS $ hAppendList (unHLS w1grad) (unHLS w2grad),
@@ -117,12 +119,20 @@ infixr 4 &&&
       -> Layer m s (HAppendListR w1 w2) a (b,b')
 Layer f1 &&& Layer f2 = Layer $ \w1w2 a -> do
   let (w1,w2) = hSplitAt (Proxy :: Proxy n) $ unHLS w1w2
-  (b,bwd1) <- f1 (HLS w1) a
-  (b',bwd2) <- f2 (HLS w2) a
+  ~(b,bwd1) <- f1 (HLS w1) a
+  ~(b',bwd2) <- f2 (HLS w2) a
   return ((b,b'), \(bgrad,bgrad') -> let (w1grad, agrad1) = bwd1 bgrad
                                          (w2grad, agrad2) = bwd2 bgrad'
                                      in (HLS $ hAppendList (unHLS w1grad) (unHLS w2grad),
                                          agrad1 ^+^ agrad2))
+
+first :: (AdditiveGroup b, Monad m) => Layer m s '[] (a, b) a
+first = Layer $ \_ (a, b) -> do
+  return (a, \a' -> (zeroV, (a', zeroV)))
+
+second :: (AdditiveGroup a, Monad m) => Layer m s '[] (a, b) b
+second = Layer $ \_ (a, b) -> do
+  return (b, \b' -> (zeroV, (zeroV, b')))
 
 terminal :: (AdditiveGroup inp, Monad m)
          => out -> Layer m a '[] inp out
@@ -137,8 +147,8 @@ Layer fab >+> Layer fbc = Layer $ \w1w2 a -> do
   let (w1,w2) = hSplitAt (Proxy :: Proxy n) $ unHLS w1w2
   ~(b, bwdab) <- fab (HLS w1) a
   ~(c, bwdbc) <- fbc (HLS w2) b
-  return (c, \c' -> let ~(w2grad, bgrad) = bwdbc c'
-                        ~(w1grad, agrad) = bwdab bgrad in
+  return (c, \c' -> let (w2grad, bgrad) = bwdbc c'
+                        (w1grad, agrad) = bwdab bgrad in
                     (HLS $ hAppendList (unHLS w1grad) (unHLS w2grad), agrad))
 
 -- Making a layer out of a differentiable function that does not depend on a set

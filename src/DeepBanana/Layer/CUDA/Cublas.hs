@@ -27,13 +27,13 @@ import qualified DeepBanana.Tensor.Mutable as MT
 import DeepBanana.Layer
 
 -- linear layer
-dot :: (MonadError String m, TensorScalar a)
+dot :: (Monad m, TensorScalar a)
     => Layer m a '[] (Tensor 2 a,Tensor 2 a) (Tensor 2 a)
 dot = combinePasses' fwddot bwddot
   where fwddot (x,w) = do
           let n :. m :. Z = shape x
               m' :. k :. Z = shape w
-          when (m /= m') $ throwError $
+          when (m /= m') $ error $
             "Incompatible shapes " ++ show (shape x) ++ " and " ++ show (shape w) ++ " for dot product."
           return $ runST $ do
             mw <- unsafeThaw w
@@ -54,7 +54,7 @@ dot = combinePasses' fwddot bwddot
             w' <- unsafeFreeze mw'
             return (x', w')
 
-linear :: (MonadError String m, TensorScalar a)
+linear :: (Monad m, TensorScalar a)
        => Layer m a '[Tensor 2 a] (Tensor 2 a) (Tensor 2 a)
 linear = Layer $ \(HLS (HCons w HNil)) x -> do
   (y, bwd) <- forwardBackward dot (HLS HNil) (x,w)

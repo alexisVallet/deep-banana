@@ -25,9 +25,7 @@ import Vision.Image.Storage.DevIL
 
 type Weights = '[Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat] 
 
-type TrainingT m = VanillaT CFloat (CUDAT m)
-
-type Training = TrainingT Identity
+type Training = ExceptT String (VanillaT CFloat (CUDAT IO))
 
 main :: IO ()
 main = do
@@ -51,8 +49,8 @@ main = do
   case pure (,) <*> emnist_train <*> emnist_val of
    Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
    Right (mnist_train,mnist_val) -> do
-     merr <- runCUDAT 42 $ runVanilla 0.01 $ do
-       w_0 <- lift $ init_weights nb_labels
+     merr <- runCUDAT 42 $ runVanilla 0.01 $ runExceptT $ do
+       w_0 <- lift $ lift $ init_weights nb_labels
        let
          nb_val_batches = fromIntegral $ (length mnist_val `div` batch_size) :: CFloat
          preprocessing =
@@ -60,31 +58,27 @@ main = do
            >-> batch_images nb_labels batch_size
            >-> P.map (\(b,l) -> (V.map grey_to_float b, l))
            >-> batch_to_gpu (batch_size:.1:.28:.28:.Z) (batch_size:.nb_labels:.Z)
-           :: Pipe (Grey, Int) (Tensor 4 CFloat, Tensor 2 CFloat) (TrainingT IO) ()
-         cost_grad' w b = hoistBase generalize $ cost_grad batch_size nb_labels w b
-         validate (_,w_t) = do
-           liftIO $ putStrLn "Computing validation cost..."
-           sum_cost <- P.sum $ forM_ mnist_val yield
-                       >-> preprocessing
-                       >-> P.mapM (fmap fst . cost_grad' w_t)
-           liftIO $ putStrLn $ "Validation cost: " ++ show (sum_cost / nb_val_batches)
-         optimize = sgd vanilla cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) (TrainingT IO) ()
+           :: Pipe (Grey, Int) (Tensor 4 CFloat, Tensor 2 CFloat) Training ()
+         cost_grad' w b = cost_grad batch_size nb_labels w b
+         optimize = sgd vanilla cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) Training ()
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
          >-> optimize
          >-> runEvery 100 (\x -> deepseq x $ liftIO $ performGC)
-         >-> runEvery 1000 validate
          >-> print_info
      case merr of
-      Left err -> ioError $ userError $ "Error during training: " ++ err
+      Left err -> error err
       Right _ -> return ()
 
-hoistBase :: (Monad m, Monad n) => (forall a . m a -> n a) -> TrainingT m a -> TrainingT n a
-hoistBase morph = hoist (hoist (hoist morph))
+cudaToTraining :: CUDA a -> Training a
+cudaToTraining cuda =
+   lift -- Dropping ExceptT for laziness
+   $ lift -- Dropping VanillaT
+   $ hoist generalize cuda -- Swapping base from IO to Identity
 
 nnet :: Int -> Int
-     -> Layer Training CFloat Weights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
+     -> Layer CUDA CFloat Weights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
 nnet batch_size nb_labels =
   let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
              >+> activation activation_relu
@@ -106,7 +100,7 @@ cost_grad :: Int -> Int -> HLSpace CFloat Weights
           -> (Tensor 4 CFloat, Tensor 2 CFloat)
           -> Training (CFloat, HLSpace CFloat Weights)
 cost_grad batch_size nb_labels w_t (batch,labels) = do
-  (cost, bwd) <- forwardBackward (nnet batch_size nb_labels) w_t (labels,batch)
+  (cost, bwd) <- cudaToTraining $ forwardBackward (nnet batch_size nb_labels) w_t (labels,batch)
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
 
@@ -129,7 +123,7 @@ data InfoState = InfoState {
   rolling_cost :: Maybe CFloat
   }
 
-print_info :: Consumer (CFloat, HLSpace CFloat Weights) (TrainingT IO) ()
+print_info :: Consumer (CFloat, HLSpace CFloat Weights) Training ()
 print_info = flip evalStateT (InfoState Nothing) $ forM_ [1..] $ \i -> do
   (cost, weights) <- lift $ await
   roll_cost <- do

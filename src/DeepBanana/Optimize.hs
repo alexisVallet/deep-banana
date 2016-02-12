@@ -49,9 +49,8 @@ runVanilla learningRate action =
   runReaderT action (VanillaReader learningRate)
 
 vanilla :: (VectorSpace w, Monad m,
-            MonadReader (VanillaReader (Scalar w))
-            (ReaderT (VanillaReader (Scalar w)) m))
-        => Scalar w -> w -> w -> VanillaT (Scalar w) m w
+            MonadReader (VanillaReader (Scalar w)) m)
+        => Scalar w -> w -> w -> m w
 vanilla cost grad w_t = do
   lr <- asks vLearningRate
   return $ w_t ^-^ lr *^ grad

@@ -82,15 +82,17 @@ data ShapeInfo t a where
   TensorShape :: (Shape (Dim n)) => Dim n -> ShapeInfo (Tensor n a) a
   ScalarShape :: ShapeInfo a a
   EmptyShape :: ShapeInfo (HLSpace a '[]) a
-  ListShape :: ShapeInfo t1 a -> ShapeInfo (HLSpace a l) a -> ShapeInfo (HLSpace a (t1 ': l)) a
+  HListShape :: ShapeInfo t1 a -> ShapeInfo (HLSpace a l) a -> ShapeInfo (HLSpace a (t1 ': l)) a
   PairShape :: ShapeInfo t1 a -> ShapeInfo t2 a -> ShapeInfo (t1,t2) a
+  ListShape :: [ShapeInfo t a] -> ShapeInfo [t] a
 
 shapeSize :: ShapeInfo t a -> Int
 shapeSize (TensorShape shp) = size shp
 shapeSize ScalarShape = 1
 shapeSize EmptyShape = 0
-shapeSize (ListShape s1 s2) = shapeSize s1 + shapeSize s2
+shapeSize (HListShape s1 s2) = shapeSize s1 + shapeSize s2
 shapeSize (PairShape s1 s2) = shapeSize s1 + shapeSize s2
+shapeSize (ListShape ss) = sum $ fmap shapeSize ss
 
 class ToTensor t where
   toTensor :: t -> (Tensor 1 (Scalar t), ShapeInfo t (Scalar t))
@@ -119,8 +121,8 @@ instance forall a e l
   toTensor (HLS (HCons e l)) =
     let (te,se) = toTensor e
         (tl,sl) = toTensor (HLS l :: HLSpace a l)
-    in (tconcat te tl, ListShape se sl)
-  fromTensor (t, ListShape se sl) =
+    in (tconcat te tl, HListShape se sl)
+  fromTensor (t, HListShape se sl) =
     let (te,tl) = case tsplitAt (shapeSize se) t of
           Left err -> error err
           Right out -> out
@@ -138,3 +140,17 @@ instance forall a b
           Left err -> error err
           Right out -> out
     in (fromTensor (ta,sa), fromTensor (tb,sb))
+
+instance (ToTensor a, TensorScalar (Scalar a), Scalar a ~ Scalar [a]) => ToTensor [a] where
+  toTensor [] = (fromList (0:.Z) [], ListShape [])
+  toTensor (x:xs) = let (tx, sx) = toTensor x
+                        (txs, sxs) = toTensor xs in
+                     case sxs of
+                      ListShape sxs' -> (tconcat tx txs, ListShape (sx:sxs'))
+  fromTensor (_, ListShape []) = []
+  fromTensor (t, ListShape (sx:sxs)) =
+    let (tx, txs) = case tsplitAt (shapeSize sx) t of
+          Left err -> error err
+          Right out -> out
+    in fromTensor (tx,sx) : fromTensor (txs, ListShape sxs)
+

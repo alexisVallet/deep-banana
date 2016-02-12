@@ -26,15 +26,14 @@ import DeepBanana.Layer.CUDA.CuRAND
 import DeepBanana.Layer.CUDA.Numeric
 import DeepBanana.Tensor
 
-type CUDAT m = ExceptT String (CuRANDT m)
+type CUDAT m = CuRANDT m
 
 type CUDA = CUDAT Identity
 
-runCUDAT :: (Monad m) => CULLong -> CUDAT m a -> m (Either String a)
-runCUDAT seed action = do
-  runCuRANDT seed (runExceptT action)
+runCUDAT :: (Monad m) => CULLong -> CUDAT m a -> m a
+runCUDAT = runCuRANDT
 
-runCUDA :: CULLong -> CUDA a -> Either String a
+runCUDA :: CULLong -> CUDA a -> a
 runCUDA seed action = runIdentity $ runCUDAT seed action
 
 -- "Naive" CUDA implementation of softmax, as workaround to bug in current
@@ -46,21 +45,21 @@ softmax (n:.m:.Z) =
   >+> id' &&& (sumRows >+> replicateAsCols m >+> inv)
   >+> multiply
 
-lreshape :: (MonadError String m, TensorScalar a, Shape (Dim n), Shape (Dim k))
+lreshape :: (Monad m, TensorScalar a, Shape (Dim n), Shape (Dim k))
          => Dim k -> Layer m a '[] (Tensor n a) (Tensor k a)
 lreshape newshp = combinePasses' fwdmul bwdmul
-  where fwdmul x = reshape newshp x
+  where fwdmul x = return $ unsafeReshape newshp x
         bwdmul x _ = return $ \upgrad -> unsafeReshape (shape x) upgrad
 
-toScalar :: (MonadError String m, TensorScalar a, Shape (Dim n))
+toScalar :: (Monad m, TensorScalar a, Shape (Dim n))
          => Layer m a '[] (Tensor n a) a
 toScalar = noWeights $ fwdBwdToScalar
   where fwdBwdToScalar x = do
-          when (size (shape x) /= 1) $ throwError $
+          when (size (shape x) /= 1) $ error $
             "Can only convert to scalar tensor with size 1.\nshape: " ++ show (shape x)
           return (head $ toList x, \upgrad -> fromList (shape x) [upgrad])
 
-mlrCost :: (MonadError String m, TensorScalar a)
+mlrCost :: (Monad m, TensorScalar a)
         => Dim 2 -> Layer m a '[] (Tensor 2 a, Tensor 2 a) (Tensor 1 a)
 mlrCost s@(n:.m:.Z) =
   id' *** (add -< 10E-5 >+> softmax s)
