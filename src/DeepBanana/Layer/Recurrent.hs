@@ -1,14 +1,23 @@
 {-# LANGUAGE TypeFamilies, DataKinds, ScopedTypeVariables #-}
 module DeepBanana.Layer.Recurrent (
-    lfold
+    CFunctor(..)
+  , CFoldable(..)
+  , CUnfoldable(..)
+  , Base(..)
+  , lfold
   , lunfold
   , lunfold'
+  , recMlrCost
+  , lzip
+  , lsum
   ) where
 
 import Control.Category
 import Control.Monad.State
 import Data.VectorSpace
 import DeepBanana.Layer
+import DeepBanana.Layer.CUDA
+import DeepBanana.Tensor
 import Prelude hiding ((.), id)
 
 data family Base t :: * -> *
@@ -48,6 +57,16 @@ instance (Monad m, AdditiveGroup (HLSpace s w))
       ~(b, bwdb) <- forwardBackward l w a
       return (Cons c b, \(Cons c' b') -> let (w', a') = bwdb b' in
                                           (w', Cons c' a'))
+
+instance (Monad m, AdditiveGroup (HLSpace s w)) => CFunctor (Layer m s w) [] where
+  cmap l = Layer $ \w as -> case as of
+    [] -> return ([], \[] -> (zeroV, []))
+    (x:xs) -> do
+      (y, bwdy) <- forwardBackward l w x
+      (ys, bwdys) <- forwardBackward (cmap l) w xs
+      return (y:ys, \(y':ys') -> let (w2', xs') = bwdys ys'
+                                     (w1', x') = bwdy y' in
+                                  (w1' ^+^ w2', x':xs'))
 
 instance (Monad m, AdditiveGroup (HLSpace s w))
          => CFoldable (Layer m s w) [a] where
@@ -119,3 +138,20 @@ instance (VectorSpace a) => VectorSpace [a] where
   type Scalar [a] = Scalar a
   x *^ [] = []
   x *^ (y:ys) = (x *^ y) : (x *^ ys)
+
+lsum :: (Monad m, AdditiveGroup a) => Layer m s '[] [a] a
+lsum = lfold $ Layer $ \_ mab -> case mab of
+                                  Nothing -> return (zeroV, \x' -> (zeroV, Nothing))
+                                  Just (a, acc) -> do
+                                    (res, bwdres) <- forwardBackward add zeroV (a,acc)
+                                    return (res, \x' -> let (_,(a', acc')) = bwdres x'
+                                                        in (zeroV, Just (a', acc')))
+
+lzip :: (Monad m) => Layer m s '[] ([a],[a]) [(a,a)]
+lzip = combinePasses' fwdZip bwdZip
+  where fwdZip (xs,ys) = return $ zip xs ys
+        bwdZip _ _ = return unzip
+
+recMlrCost :: (Monad m, TensorScalar a)
+           => Dim 2 -> Layer m a '[] ([Tensor 2 a], [Tensor 2 a]) (Tensor 1 a)
+recMlrCost s = lzip >+> cmap (mlrCost s) >+> lsum
