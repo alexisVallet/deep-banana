@@ -1,11 +1,11 @@
 module DeepBanana.Data (
-    load_mnist
-  , load_mnist_lazy
-  , lazy_image_loader  
+    lazy_image_loader  
   , randomize
   , map_pixels
   , batch_images
+  , batch_images_pad_labels
   , batch_to_gpu
+  , batch_labels_to_gpu
   , runEvery
   , serializeTo
   , random_crop
@@ -74,49 +74,11 @@ instance (Storable i)
      Nothing -> error "Could not convert back to an image to data alignment issues."
      Just vec -> return (Manifest (VP.Z VP.:. w VP.:. h) vec)
 
-load_mnist :: (Convertible StorageImage i)
-           => FilePath -> IO [(i, Int)]
-load_mnist directory = do
-  dirs <- getDirectoryContents directory >>= filterM (\d -> doesDirectoryExist $ directory </> d)
-  imgs <- forM dirs $ \classname -> do
-    imgfpaths <- getDirectoryContents (directory </> classname) 
-    imgs' <- forM imgfpaths $ \imgfpath -> do
-        eimg <-load Autodetect $ directory </> classname </> imgfpath
-        case eimg of
-          Left err -> return Nothing
-          Right img -> return $ Just (img, read classname)
-    return imgs'
-  return $ fmap fromJust $ filter (\mi -> case mi of
-                                      Nothing -> False
-                                      _ -> True) $ Prelude.concat $ imgs
-
-load_mnist_lazy :: (MonadIO m, Convertible StorageImage i)
-                => FilePath -> Producer (i, Int) m ()
-load_mnist_lazy directory = do
-  dirs <- liftIO $ getDirectoryContents directory >>= filterM (\d -> doesDirectoryExist $ directory </> d)
-  forM_ dirs $ \classname -> do
-    imgfpaths <- liftIO $ getDirectoryContents (directory </> classname) 
-    forM_ imgfpaths $ \imgfpath -> do
-      eimg <- liftIO $ load Autodetect $ directory </> classname </> imgfpath
-      case eimg of
-       Left err -> do
-         liftIO $ do
-           putStrLn $ "Couldn't load image " ++ imgfpath
-           putStrLn $ "\t" ++ show err
-         return ()
-       Right img -> yield (img, read classname)
-
-while :: (Monad m) => (m Bool) -> m b -> m [b]
-while pred action = do
-  continue <- pred
-  if continue then do
-    x <- action
-    xs <- while pred action
-    return (x:xs)
-  else return []
-
-lazy_image_loader :: forall i m l . (Image i, Convertible StorageImage i, Storable (ImagePixel i), MonadIO m)
-                  => Proxy i -> FilePath -> Pipe (FilePath, l) (Manifest (ImagePixel i), l) m ()
+lazy_image_loader :: forall i m l
+                  . (Image i, Convertible StorageImage i, Storable (ImagePixel i),
+                     MonadIO m)
+                  => Proxy i -> FilePath
+                  -> Pipe (FilePath, l) (Manifest (ImagePixel i), l) m ()
 lazy_image_loader _ directory = forever $ do
   (fpath, labels) <- await
   eimg <- liftIO $
@@ -183,6 +145,8 @@ samesize_concat vectors = runST $ do
     MV.unsafeCopy mresslice mv
   V.unsafeFreeze mres
 
+-- Batches images, and multiple labels in a single label matrix L s.t.
+-- L_i,j = 1 if i has label h else 0
 batch_images :: (Image i, Storable (PixelChannel (ImagePixel i)),
                  Pixel (ImagePixel i), Monad m, TensorScalar a)
              => Int
@@ -199,6 +163,35 @@ batch_images nb_labels batch_size = forever $ do
       lmatrix = V.concat $ fmap oneHot labels
   yield (batch, lmatrix)
 
+-- Batches images, and multiple labels as a batched sequences of labels.
+-- The output sequence will have the length of the longest sequence in the
+-- batch, and shorter sequences will be padded with all 0 vectors. Otherwise,
+-- uses one-hot encoding.
+batch_images_pad_labels :: (Image i, Storable (PixelChannel (ImagePixel i)),
+                            Pixel (ImagePixel i), Monad m, TensorScalar a)
+                        => Int
+                        -> Int
+                        -> Pipe (i, [Int]) (V.Vector (PixelChannel (ImagePixel i)), [V.Vector a]) m ()
+batch_images_pad_labels nb_labels batch_size = forever $ do
+  imgAndLabels <- replicateM batch_size await
+  let (images, labels) = unzip imgAndLabels
+      VP.Z VP.:. h VP.:. w = Friday.shape $ head images
+      c = nChannels $ head images
+      imgVecs = fmap img_to_vec $ images
+      batch = samesize_concat imgVecs
+      longest_seq_len = maximum $ fmap length labels
+      padded_labels = fmap (\l -> fmap Just l ++ take (longest_seq_len - length l) (repeat Nothing)) labels
+      oneHot mi = runST $ do
+        mres <- MV.replicate nb_labels 0
+        case mi of
+         Nothing -> V.unsafeFreeze mres
+         Just i -> do
+           MV.write mres i 1
+           V.unsafeFreeze mres
+      onehot_labels = fmap (\ls -> samesize_concat $ fmap oneHot ls) padded_labels
+  yield (batch, onehot_labels)
+
+
 batch_to_gpu :: (MonadIO m, MonadError String m, TensorScalar a,
                  Shape (Dim n1), Shape (Dim n2))
              => Dim n1
@@ -208,6 +201,17 @@ batch_to_gpu shp1 shp2 = forever $ do
   (batch, labels) <- await
   tbatch <- fromVector shp1 batch
   tlabels <- fromVector shp2 labels
+  yield (tbatch, tlabels)
+
+batch_labels_to_gpu :: (MonadIO m, MonadError String m, TensorScalar a,
+                        Shape (Dim n1), Shape (Dim n2))
+                    => Dim n1
+                    -> Dim n2
+                    -> Pipe (V.Vector a, [V.Vector a]) (Tensor n1 a, [Tensor n2 a]) m ()
+batch_labels_to_gpu shp1 shp2 = forever $ do
+  (batch, labels) <- await
+  tbatch <- fromVector shp1 batch
+  tlabels <- forM labels $ \ls -> fromVector shp2 ls
   yield (tbatch, tlabels)
 
 -- serializes inputs
