@@ -21,6 +21,7 @@ import qualified Vision.Primitive as VP
 import Vision.Image.Storage.DevIL
 import Pipes hiding (Proxy)
 import System.Directory
+import Data.List
 import Data.Maybe
 import Control.Monad
 import Control.Monad.Except
@@ -188,7 +189,8 @@ batch_images_pad_labels nb_labels batch_size = forever $ do
          Just i -> do
            MV.write mres i 1
            V.unsafeFreeze mres
-      onehot_labels = fmap (\ls -> samesize_concat $ fmap oneHot ls) padded_labels
+      onehot_labels = fmap (\ls -> samesize_concat $ fmap oneHot ls)
+                      $ transpose padded_labels
   yield (batch, onehot_labels)
 
 
