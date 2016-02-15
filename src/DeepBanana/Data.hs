@@ -1,6 +1,7 @@
 module DeepBanana.Data (
     lazy_image_loader  
   , randomize
+  , randomize_seq_length
   , map_pixels
   , batch_images
   , batch_images_pad_labels
@@ -41,6 +42,8 @@ import Data.IORef
 import Control.DeepSeq
 import Foreign.ForeignPtr
 import Control.Applicative
+import Control.Category
+import Prelude hiding ((.), id)
 
 import DeepBanana.Tensor as T
 
@@ -118,6 +121,18 @@ randomize :: (MonadRandom m) => [a] -> Producer a m ()
 randomize xs = do
   sxs <- lift $ shuffle xs
   forM_ sxs yield
+
+randomize_seq_length :: (MonadRandom m) => Int -> Int -> Pipe (a,[b]) (a,[b]) m ()
+randomize_seq_length nb_batches batch_size = forever $ do
+  macro_batch <- replicateM (nb_batches * batch_size) await
+  let sorted_batch = sortOn (snd >>> length) macro_batch
+      mini_batches = unfoldr (\xs -> case xs of
+                          [] -> Nothing
+                          _ -> Just $ splitAt batch_size xs) sorted_batch
+  random_batches <- lift $ shuffle mini_batches
+  forM_ random_batches $ \batch -> do
+    random_batch <- lift $ shuffle batch
+    forM_ random_batch yield
 
 -- Converts an image to a storable-based vector by casting and sharing the inner
 -- data foreign pointer.
