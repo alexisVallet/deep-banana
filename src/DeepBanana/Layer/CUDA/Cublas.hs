@@ -41,8 +41,8 @@ dot = combinePasses' fwddot bwddot
             out <- MT.emptyTensor $ n :. k :. Z
             gemmFwd cublasHandle Cublas.N Cublas.N 1 mx mw 0 out
             unsafeFreeze out
-        bwddot (x,w) _ = do
-          return $ \upgrad -> runST $ do
+        bwddot (x,w) out = do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             mw <- unsafeThaw w
             mx <- unsafeThaw x
             mupgrad <- unsafeThaw upgrad
@@ -58,8 +58,8 @@ linear :: (Monad m, TensorScalar a)
        => Layer m a '[Tensor 2 a] (Tensor 2 a) (Tensor 2 a)
 linear = Layer $ \(HLS (HCons w HNil)) x -> do
   (y, bwd) <- forwardBackward dot (HLS HNil) (x,w)
-  return (y, \y' -> let (_, (x',w')) = bwd y'
-                    in (HLS $ HCons w' HNil, x'))
+  return (y, unsafeBroadcast (shape y) >>> \y' -> let (_, (x',w')) = bwd y'
+                                                  in (HLS $ HCons w' HNil, x'))
 
 -- matrix sum reductions
 sumCols :: (Monad m, TensorScalar a)
@@ -74,8 +74,8 @@ sumCols = combinePasses' fwdsumcols bwdsumcols
             gemmFwd cublasHandle Cublas.N Cublas.N 1 ones mx 0 out
             fout <- unsafeFreeze out
             return $ unsafeReshape (m:.Z) fout
-        bwdsumcols x _ = do
-          return $ \upgrad -> runST $ do
+        bwdsumcols x out = do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ shape x
@@ -94,8 +94,8 @@ sumRows = combinePasses' fwdsumrows bwdsumrows
             mx <- unsafeThaw x
             gemmFwd cublasHandle Cublas.N Cublas.N 1 mx ones 0 out
             fmap (unsafeReshape $ n :. Z) $ unsafeFreeze out
-        bwdsumrows x _ = do
-          return $ \upgrad -> runST $ do
+        bwdsumrows x out = do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ m :. 1 :. Z
             out <- MT.emptyTensor $ shape x
@@ -115,8 +115,8 @@ replicateAsRows n = combinePasses' fwdRepRows bwdRepRows
             mx <- fmap (MT.unsafeReshape $ 1 :. m :. Z) $ unsafeThaw x
             gemmFwd cublasHandle Cublas.N Cublas.N 1 ones mx 0 out
             unsafeFreeze out
-        bwdRepRows x _ = do
-          return $ \upgrad -> runST $ do
+        bwdRepRows x out = do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             let m :. Z = shape x
             ones <- MT.ones $ n :. 1 :. Z
             out <- MT.emptyTensor $ 1 :. m :. Z
@@ -136,8 +136,8 @@ replicateAsCols n = combinePasses' fwdRepCols bwdRepCols
             mx <- fmap (MT.unsafeReshape $ m :. 1 :. Z) $ unsafeThaw x
             gemmFwd cublasHandle Cublas.N Cublas.N 1 mx ones 0 out
             unsafeFreeze out
-        bwdRepCols x _ = do
-          return $ \upgrad -> runST $ do
+        bwdRepCols x out = do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             let m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ m :. 1 :. Z

@@ -53,7 +53,7 @@ convolution2d padding stride algo =
             fmaps' <- unsafeThaw fmaps
             convres <- convolution2dFwd cudnnHandle padding stride algo fmaps' filters'
             unsafeFreeze convres
-        convbwd (HLS (HCons filters HNil)) fmaps _ = do
+        convbwd (HLS (HCons filters HNil)) fmaps out = do
           let bwdfilters upgrad = runST $ do
                 filters' <- unsafeThaw filters
                 fmaps' <- unsafeThaw fmaps
@@ -66,7 +66,8 @@ convolution2d padding stride algo =
                 upgrad' <- unsafeThaw upgrad
                 inputsgrad <- convolution2dBwdInputs cudnnHandle padding stride fmaps' filters' upgrad'
                 unsafeFreeze inputsgrad
-          return $ \upgrad -> (HLS $ bwdfilters upgrad `HCons` HNil, bwdinputs upgrad)
+          return $ unsafeBroadcast (shape out)
+            >>> \upgrad -> (HLS $ bwdfilters upgrad `HCons` HNil, bwdinputs upgrad)
 
 activation :: (Monad m, TensorScalar a)
            => CuDNN.ActivationMode
@@ -79,7 +80,7 @@ activation mode =
             activations <- activationFwd cudnnHandle mode fmaps'
             unsafeFreeze activations
         actbwd inp out = do
-          return $ \upgrad -> runST $ do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             inp' <- unsafeThaw inp
             out' <- unsafeThaw out
             upgrad' <- unsafeThaw upgrad
@@ -101,7 +102,7 @@ pooling2d psize padding stride mode =
             poolres <- pooling2dFwd cudnnHandle psize padding stride mode fmaps'
             unsafeFreeze poolres
         poolbwd inp out = do
-          return $ \upgrad -> runST $ do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             inp' <- unsafeThaw inp
             out' <- unsafeThaw out
             upgrad' <- unsafeThaw upgrad
@@ -116,8 +117,8 @@ nchw_to_nhwc = combinePasses' fwdTrans bwdTrans
             mt <- unsafeThaw t
             mt' <- nchw_to_nhwc' cudnnHandle mt
             unsafeFreeze mt'
-        bwdTrans _ _ = do
-          return $ \upgrad -> runST $ do
+        bwdTrans _ out = do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             mu <- unsafeThaw upgrad
             mu' <- nhwc_to_nchw' cudnnHandle mu
             unsafeFreeze mu'
@@ -130,8 +131,8 @@ nhwc_to_nchw = combinePasses' fwdTrans bwdTrans
             mt <- unsafeThaw t
             mt' <- nhwc_to_nchw' cudnnHandle mt
             unsafeFreeze mt'
-        bwdTrans _ _ = do
-          return $ \upgrad -> runST $ do
+        bwdTrans _ out = do
+          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
             mu <- unsafeThaw upgrad
             mu' <- nchw_to_nhwc' cudnnHandle mu
             unsafeFreeze mu'

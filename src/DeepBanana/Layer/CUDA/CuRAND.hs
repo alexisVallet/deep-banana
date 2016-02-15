@@ -83,7 +83,8 @@ dropout drop_proba = noWeights fwdbwd
             mask <- dropoutMaskIO gen (shape inp) drop_proba
             unsafeFreeze mask
           return $ runST $ do
-            return (inp * pure_mask, \upgrad -> upgrad * pure_mask)
+            return (inp * pure_mask,
+                    unsafeBroadcast (shape inp) >>> \upgrad -> upgrad * pure_mask)
 
 -- dropout
 -- compute a random mask of ones and zeros

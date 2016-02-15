@@ -19,6 +19,7 @@ test_recurrent_layers :: Spec
 test_recurrent_layers = do
   test_lunfold
   test_recMlrCost
+  test_lunfold_and_recMlrCost
 
 test_lunfold :: Spec
 test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
@@ -56,8 +57,43 @@ test_recMlrCost = describe "DeepBanana.Layer.Recurrent.recMlrCost" $ do
   it "Has a correct backward pass" $ do
     let nb_samples = 4
         nb_output = 4
-        out_length = 1
+        out_length = 3
         out_seq = replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
         labels = replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
         cost = recMlrCost (nb_samples:.nb_output:.Z) >+> toScalar
     runCUDA 42 $ check_backward cost (return zeroV) (pure (,) <*> labels <*> out_seq) (return 1 :: CUDA CFloat)
+
+test_lunfold_and_recMlrCost :: Spec
+test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> recMlrCost" $ do
+  it "Has a correct backward pass" $ do
+    let nb_samples = 4
+        nb_features = 8
+        nb_output = 4
+        out_length = 3
+        xavier s@(nb_input:.nb_output:.Z) = do
+          x <- uniform s
+          return $ (sqrt 6 / sqrt (fromIntegral $ nb_input + nb_output)) * (x - 0.5)
+        h_to_out =
+          linear
+          >+> lreshape (nb_samples:.nb_output:.1:.1:.Z)
+          >+> activation activation_tanh
+          >+> lreshape (nb_samples:.nb_output:.Z) :: Layer CUDA CFloat '[Tensor 2 CFloat] (Tensor 2 CFloat) (Tensor 2 CFloat)
+        h_to_h =
+          linear
+          >+> lreshape (nb_samples:.nb_features:.1:.1:.Z)
+          >+> activation activation_tanh
+          >+> lreshape (nb_samples:.nb_features:.Z) :: Layer CUDA CFloat '[Tensor 2 CFloat] (Tensor 2 CFloat) (Tensor 2 CFloat)
+        recnet =
+          lunfold' out_length (h_to_out &&& h_to_h)
+        cost = recMlrCost (nb_samples:.nb_output:.Z) >+> toScalar
+        fullNet = (id' *** recnet) >+> cost
+        w = do
+          w' <- pure hBuild
+                <*> xavier (nb_features:.nb_output:.Z)
+                <*> xavier (nb_features:.nb_features:.Z)
+          return $ HLS $ hEnd w'
+        input = do
+          x <- uniform (nb_samples:.nb_features:.Z)
+          labels <- replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
+          return (labels,x)
+    runCUDA 42 $ check_backward fullNet w input (return 1)

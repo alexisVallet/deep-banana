@@ -13,6 +13,7 @@ module DeepBanana.Tensor (
   , reshape
   , unsafeReshape
   , broadcast
+  , unsafeBroadcast
   , zeros
   , ones
   -- * Converting from/to mutable tensors
@@ -246,6 +247,12 @@ broadcast outshp inp = do
               broadcast_copy out_nbdim out_size inpptr inp_shapeptr outptr
                 out_shapeptr
       unsafeFreeze mout
+
+unsafeBroadcast :: (Shape (Dim n), TensorScalar a)
+                => Dim n -> Tensor n a -> Tensor n a
+unsafeBroadcast outshp inp = case broadcast outshp inp of
+  Left err -> error err
+  Right out -> out
 
 bin_broadcast :: (MonadError String m, Shape (Dim n), TensorScalar a)
               => Tensor n a -> Tensor n a -> m (Tensor n a, Tensor n a)
