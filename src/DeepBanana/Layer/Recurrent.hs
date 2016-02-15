@@ -147,6 +147,11 @@ lsum = lfold $ Layer $ \_ mab -> case mab of
                                     return (res, \x' -> let (_,(a', acc')) = bwdres x'
                                                         in (zeroV, Just (a', acc')))
 
+lmean :: (Monad m, InnerSpace a, VectorSpace (Scalar a), Floating (Scalar a)) => Layer m (Scalar a) '[] [a] a
+lmean = Layer $ \_ as -> do
+  let scaling = 1 / (fromIntegral $ length as)
+  forwardBackward (lsum >+> scale -< scaling) zeroV as
+
 lzip :: (Monad m) => Layer m s '[] ([a],[a]) [(a,a)]
 lzip = combinePasses' fwdZip bwdZip
   where fwdZip (xs,ys) = return $ zip xs ys
@@ -154,4 +159,4 @@ lzip = combinePasses' fwdZip bwdZip
 
 recMlrCost :: (Monad m, TensorScalar a)
            => Dim 2 -> Layer m a '[] ([Tensor 2 a], [Tensor 2 a]) (Tensor 1 a)
-recMlrCost s = lzip >+> cmap (mlrCost s) >+> lsum
+recMlrCost s = lzip >+> cmap (mlrCost s) >+> lmean
