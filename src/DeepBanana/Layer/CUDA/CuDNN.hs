@@ -69,23 +69,24 @@ convolution2d padding stride algo =
           return $ unsafeBroadcast (shape out)
             >>> \upgrad -> (HLS $ bwdfilters upgrad `HCons` HNil, bwdinputs upgrad)
 
-activation :: (Monad m, TensorScalar a)
+activation :: (Monad m, TensorScalar a, Shape (Dim n))
            => CuDNN.ActivationMode
-           -> Layer m a '[] (Tensor 4 a) (Tensor 4 a)
+           -> Layer m a '[] (Tensor n a) (Tensor n a)
 activation mode =
   combinePasses' actfwd actbwd
-  where actfwd fmaps = do
+  where to4 t = unsafeReshape (size (shape t):.1:.1:.1:.Z) t
+        actfwd fmaps = do
           return $ runST $ do
-            fmaps' <- unsafeThaw fmaps
+            fmaps' <- unsafeThaw $ to4 fmaps
             activations <- activationFwd cudnnHandle mode fmaps'
-            unsafeFreeze activations
+            fmap (unsafeReshape (shape fmaps)) $ unsafeFreeze activations
         actbwd inp out = do
           return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
-            inp' <- unsafeThaw inp
-            out' <- unsafeThaw out
-            upgrad' <- unsafeThaw upgrad
+            inp' <- unsafeThaw $ to4 inp
+            out' <- unsafeThaw $ to4 out
+            upgrad' <- unsafeThaw $ to4 upgrad
             grad <- activationBwd cudnnHandle mode inp' out' upgrad'
-            unsafeFreeze grad
+            fmap (unsafeReshape (shape inp)) $ unsafeFreeze grad
 
 -- pooling
 pooling2d :: (Monad m, TensorScalar a)

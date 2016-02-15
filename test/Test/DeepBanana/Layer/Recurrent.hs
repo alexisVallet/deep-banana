@@ -33,14 +33,10 @@ test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
           return $ (sqrt 6 / sqrt (fromIntegral $ nb_input + nb_output)) * (x - 0.5)
         h_to_out =
           linear
-          >+> lreshape (nb_samples:.nb_output:.1:.1:.Z)
           >+> activation activation_tanh
-          >+> lreshape (nb_samples:.nb_output:.Z) :: Layer CUDA CFloat '[Tensor 2 CFloat] (Tensor 2 CFloat) (Tensor 2 CFloat)
         h_to_h =
           linear
-          >+> lreshape (nb_samples:.nb_features:.1:.1:.Z)
           >+> activation activation_tanh
-          >+> lreshape (nb_samples:.nb_features:.Z) :: Layer CUDA CFloat '[Tensor 2 CFloat] (Tensor 2 CFloat) (Tensor 2 CFloat)
         recnet =
           lunfold' out_length (h_to_out &&& h_to_h)
         w = do
@@ -48,7 +44,7 @@ test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
                 <*> xavier (nb_features:.nb_output:.Z)
                 <*> xavier (nb_features:.nb_features:.Z)
           return $ HLS $ hEnd w'
-        h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01
+        h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01 :: CUDA (Tensor 2 CFloat)
         upgrad = replicateM out_length $ normal (nb_samples:.nb_output:.Z) 0 0.01
     runCUDA 42 $ check_backward recnet w h_0 upgrad
 
@@ -75,14 +71,10 @@ test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> 
           return $ (sqrt 6 / sqrt (fromIntegral $ nb_input + nb_output)) * (x - 0.5)
         h_to_out =
           linear
-          >+> lreshape (nb_samples:.nb_output:.1:.1:.Z)
           >+> activation activation_tanh
-          >+> lreshape (nb_samples:.nb_output:.Z) :: Layer CUDA CFloat '[Tensor 2 CFloat] (Tensor 2 CFloat) (Tensor 2 CFloat)
         h_to_h =
           linear
-          >+> lreshape (nb_samples:.nb_features:.1:.1:.Z)
           >+> activation activation_tanh
-          >+> lreshape (nb_samples:.nb_features:.Z) :: Layer CUDA CFloat '[Tensor 2 CFloat] (Tensor 2 CFloat) (Tensor 2 CFloat)
         recnet =
           lunfold' out_length (h_to_out &&& h_to_h)
         cost = recMlrCost (nb_samples:.nb_output:.Z) >+> toScalar
@@ -96,4 +88,4 @@ test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> 
           x <- uniform (nb_samples:.nb_features:.Z)
           labels <- replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
           return (labels,x)
-    runCUDA 42 $ check_backward fullNet w input (return 1)
+    runCUDA 42 $ check_backward fullNet w input (return 1 :: CUDA CFloat)
