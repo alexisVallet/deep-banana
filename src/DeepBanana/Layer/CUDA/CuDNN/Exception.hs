@@ -25,79 +25,80 @@ module DeepBanana.Layer.CUDA.CuDNN.Exception (
   ) where
 
 import qualified Foreign.CUDA.CuDNN as CuDNN
+import GHC.Stack
 import System.IO.Unsafe
 
 import DeepBanana.Prelude
 import DeepBanana.Exception
 import DeepBanana.Layer.CUDA.Exception
 
-statusToStackString :: CuDNN.Status -> WithStack String
+statusToStackString :: (?loc :: CallStack) => CuDNN.Status -> WithStack String
 statusToStackString status =
   withStack $ unsafePerformIO $ CuDNN.getErrorString status >>= peekCString
 
 newtype BadParam = BadParam (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-badParam :: BadParam
+badParam :: (?loc :: CallStack) => BadParam
 badParam = BadParam $ statusToStackString CuDNN.bad_param
 
 newtype NotInitialized = NotInitialized (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-notInitialized :: NotInitialized
+notInitialized :: (?loc :: CallStack) => NotInitialized
 notInitialized = NotInitialized $ statusToStackString CuDNN.not_initialized
 
 newtype AllocFailed = AllocFailed (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-allocFailed :: AllocFailed
+allocFailed :: (?loc :: CallStack) => AllocFailed
 allocFailed = AllocFailed $ statusToStackString CuDNN.alloc_failed
 
 newtype InternalError = InternalError (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-internalError :: InternalError
+internalError :: (?loc :: CallStack) => InternalError
 internalError = InternalError $ statusToStackString CuDNN.internal_error
 
 newtype InvalidValue = InvalidValue (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-invalidValue :: InvalidValue
+invalidValue :: (?loc :: CallStack) => InvalidValue
 invalidValue = InvalidValue $ statusToStackString CuDNN.invalid_value
 
 newtype ArchMismatch = ArchMismatch (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-archMismatch :: ArchMismatch
+archMismatch :: (?loc :: CallStack) => ArchMismatch
 archMismatch = ArchMismatch $ statusToStackString CuDNN.arch_mismatch
 
 newtype MappingError = MappingError (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-mappingError :: MappingError
+mappingError :: (?loc :: CallStack) => MappingError
 mappingError = MappingError $ statusToStackString CuDNN.mapping_error
 
 newtype ExecutionFailed = ExecutionFailed (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-executionFailed :: ExecutionFailed
+executionFailed :: (?loc :: CallStack) => ExecutionFailed
 executionFailed = ExecutionFailed $ statusToStackString CuDNN.execution_failed
 
 newtype NotSupported = NotSupported (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-notSupported :: NotSupported
+notSupported :: (?loc :: CallStack) => NotSupported
 notSupported = NotSupported $ statusToStackString CuDNN.not_supported
 
 newtype LicenseError = LicenseError (WithStack String)
                       deriving (Eq, Show, Typeable, Exception)
 
-licenseError :: LicenseError
+licenseError :: (?loc :: CallStack) => LicenseError
 licenseError = LicenseError $ statusToStackString CuDNN.license_error
 
 class StatusException e where
   status :: Proxy e -> CuDNN.Status
-  exception :: e
+  exception :: (?loc :: CallStack) => e
 
 instance StatusException BadParam where
   status _ = CuDNN.bad_param
@@ -140,7 +141,7 @@ instance StatusException LicenseError where
   exception = licenseError
 
 handleStatus :: forall t m e
-             . (MonadError t m, Variant t e, StatusException e)
+             . (?loc :: CallStack, MonadError t m, Variant t e, StatusException e)
              => Proxy e -> m CuDNN.Status -> m CuDNN.Status
 handleStatus p action = do
   status' <- action

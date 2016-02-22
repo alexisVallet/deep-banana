@@ -1,8 +1,10 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, ImplicitParams #-}
 module DeepBanana.Data.Exception (
     EmptyBatch
   , emptyBatch
   ) where
+
+import GHC.Stack
 
 import DeepBanana.Exception
 import DeepBanana.Prelude
@@ -10,5 +12,5 @@ import DeepBanana.Prelude
 newtype EmptyBatch = EmptyBatch (WithStack String)
                      deriving (Eq, Show, Typeable, Exception)
 
-emptyBatch :: String -> EmptyBatch
+emptyBatch :: (?loc :: CallStack) => String -> EmptyBatch
 emptyBatch = EmptyBatch . withStack

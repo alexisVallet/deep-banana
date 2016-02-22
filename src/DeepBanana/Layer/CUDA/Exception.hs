@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, StandaloneDeriving, ImplicitParams, InstanceSigs #-}
 module DeepBanana.Layer.CUDA.Exception (
     handleCUDAException
   , CUDAException
@@ -6,13 +6,14 @@ module DeepBanana.Layer.CUDA.Exception (
   ) where
 
 import qualified Foreign.CUDA as CUDA
+import GHC.Stack
 
 import DeepBanana.Exception
 import DeepBanana.Prelude
 
 class (Eq e, Exception e) => CUDAException e where
   cudaException :: Proxy e -> CUDA.CUDAException
-  exception :: e
+  exception :: (?loc :: CallStack) => e
 
 -- Mysteriously missing from the CUDA package
 deriving instance Eq CUDA.CUDAException
@@ -31,4 +32,5 @@ newtype MemoryAllocation = MemoryAllocation (WithStack CUDA.Status)
 
 instance CUDAException MemoryAllocation where
   cudaException _ = CUDA.ExitCode CUDA.MemoryAllocation
+  exception :: (?loc :: CallStack) => MemoryAllocation
   exception = MemoryAllocation $ withStack $ CUDA.MemoryAllocation
