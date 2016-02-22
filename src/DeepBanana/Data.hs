@@ -1,6 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 module DeepBanana.Data (
-    lazy_image_loader  
+    module DeepBanana.Data.Exception
+  , lazy_image_loader  
   , randomize
   , randomize_seq_length
   , map_pixels
