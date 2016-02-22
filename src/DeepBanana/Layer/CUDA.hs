@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilies, RankNTypes #-}
 module DeepBanana.Layer.CUDA (
     module DeepBanana.Layer.CUDA.CuDNN
   , module DeepBanana.Layer.CUDA.CuDNN.Exception
