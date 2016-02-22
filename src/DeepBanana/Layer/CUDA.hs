@@ -13,6 +13,7 @@ module DeepBanana.Layer.CUDA (
   , runCUDATEx
   , runCUDA
   , runCUDAEx
+  , cudaHoist
   , softmax
   , lreshape
   , toScalar
@@ -64,6 +65,9 @@ runCUDA seed action = runIdentity $ runCUDAT seed action
 
 runCUDAEx :: CULLong -> CUDA a -> a
 runCUDAEx seed action = unsafeRunExcept $ runCUDA seed action
+
+cudaHoist :: (Monad m, Monad n) => (forall a . m a -> n a) -> CUDAT m a -> CUDAT n a
+cudaHoist morph = hoist (hoist morph)
 
 -- "Naive" CUDA implementation of softmax, as workaround to bug in current
 -- CuDNN-based softmax.
