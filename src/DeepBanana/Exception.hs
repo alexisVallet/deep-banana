@@ -12,6 +12,7 @@ module DeepBanana.Exception (
 
 import DeepBanana.Prelude
 import Data.Typeable
+import GHC.SrcLoc
 import GHC.Stack
 
 data Coproduct (l :: [*]) where
@@ -59,7 +60,10 @@ throwVariant = throwError . setVariant
 data WithStack e = WithStack {
     exception :: e
   , callStack :: String
-  } deriving (Eq, Show, Typeable)
+  } deriving (Eq, Typeable)
+
+instance (Show e) => Show (WithStack e) where
+  show wse = show (exception wse) ++ "\n" ++ callStack wse
 
 instance (Eq e, Show e, Typeable e) => Exception (WithStack e)
 
