@@ -16,9 +16,9 @@ import DeepBanana
 allClose :: (TensorScalar a, Ord a, Shape (Dim n)) => Tensor n a -> Tensor n a -> Bool
 allClose t1 t2 =
   all (\(x1,x2) -> abs (x1 - x2) / (abs x1 + abs x2) < 0.1)
-  $ zip (toList t1) (toList t2)
+  $ zip (tensorToList t1) (tensorToList t2)
 
-check_backward :: (Monad m, TensorScalar a, Ord a, Show a,
+check_backward :: (MonadIO m, TensorScalar a, Ord a, Show a,
                    Show inp, Show (HLSpace a w), Show out, ToTensor inp,
                    ToTensor (HLSpace a w), ToTensor out, Scalar out ~ a,
                    Scalar (HLSpace a w) ~ a, Scalar inp ~ a)
@@ -26,7 +26,7 @@ check_backward :: (Monad m, TensorScalar a, Ord a, Show a,
                -> m (HLSpace a w)
                -> m inp
                -> m out
-               -> m Expectation
+               -> m ()
 check_backward layer weights input upgrad = do
   x <- input
   y <- upgrad
@@ -36,11 +36,11 @@ check_backward layer weights input upgrad = do
   let (t_num_x',_) = toTensor num_x'
       (t_analytic_x',_) = toTensor analytic_x'
   if (not $ allClose t_num_x' t_analytic_x')
-    then return $
+    then liftIO $
     expectationFailure
     $ "Numeric and analytic gradient do not match:\nNumeric: "
     ++ show num_x' ++ "\nAnalytic: " ++ show analytic_x'
-    else return $ return ()
+    else return ()
 
 numericBwd :: (TensorScalar a, Shape (Dim n), Shape (Dim k), Monad m)
            => (Tensor n a -> m (Tensor k a))
@@ -48,19 +48,19 @@ numericBwd :: (TensorScalar a, Shape (Dim n), Shape (Dim k), Monad m)
            -> Tensor k a
            -> m (Tensor n a)
 numericBwd f inp upgrad = do
-  let inplist = toList inp
-      upgradlist = toList upgrad
+  let inplist = tensorToList inp
+      upgradlist = tensorToList upgrad
       insize = size $ shape inp
       h = 10E-5
       finitediff i = do
         fph <- f (shift i h)
         fmh <- f (shift i (-h))
         return $ (1/(2*h)) *^ (fph - fmh)
-      shift i offset = fromList (shape inp) [if j /= i then inplist!!j else inplist!!j + offset | j <- [0..insize-1]]
+      shift i offset = tensorFromList' (shape inp) [if j /= i then inplist!!j else inplist!!j + offset | j <- [0..insize-1]]
   listGrad <- forM [0..insize-1] $ \i -> do
     fdiff <- finitediff i
     return $ fdiff <.> upgrad
-  return $ fromList (shape inp) listGrad
+  return $ tensorFromList' (shape inp) listGrad
 
 genericNumericBwd :: (ToTensor inp, ToTensor out, Scalar inp ~ Scalar out,
                       Monad m, TensorScalar (Scalar inp))
@@ -100,18 +100,18 @@ class ToTensor t where
 
 instance (TensorScalar a, Shape (Dim n)) => ToTensor (Tensor n a) where
   toTensor t = (flatten t, TensorShape $ shape t)
-  fromTensor (t, TensorShape shp) = unsafeReshape shp t
+  fromTensor (t, TensorShape shp) = reshape' shp t
 
 instance ToTensor CFloat where
-  toTensor x = (fromList (1:.Z) [x], ScalarShape)
-  fromTensor (t,_) = head $ toList t
+  toTensor x = (tensorFromList' (1:.Z) [x], ScalarShape)
+  fromTensor (t,_) = head $ tensorToList t
 
 instance ToTensor CDouble where
-  toTensor x = (fromList (1:.Z) [x], ScalarShape)
-  fromTensor (t,_) = head $ toList t
+  toTensor x = (tensorFromList' (1:.Z) [x], ScalarShape)
+  fromTensor (t,_) = head $ tensorToList t
 
 instance (TensorScalar a) => ToTensor (HLSpace a '[]) where
-  toTensor _ = (fromList (0:.Z) [], EmptyShape)
+  toTensor _ = (tensorFromList' (0:.Z) [], EmptyShape)
   fromTensor _ = HLS HNil
 
 instance forall a e l
@@ -121,11 +121,9 @@ instance forall a e l
   toTensor (HLS (HCons e l)) =
     let (te,se) = toTensor e
         (tl,sl) = toTensor (HLS l :: HLSpace a l)
-    in (tconcat te tl, HListShape se sl)
+    in (tconcat' te tl, HListShape se sl)
   fromTensor (t, HListShape se sl) =
-    let (te,tl) = case tsplitAt (shapeSize se) t of
-          Left err -> error err
-          Right out -> out
+    let (te,tl) = tsplitAt' (shapeSize se) t
     in HLS $ HCons (fromTensor (te,se) :: e) (unHLS (fromTensor (tl,sl) :: HLSpace a l))
 
 instance forall a b
@@ -134,23 +132,18 @@ instance forall a b
   toTensor (a,b) =
     let (ta,sa) = toTensor a
         (tb,sb) = toTensor b
-    in (tconcat ta tb, PairShape sa sb :: ShapeInfo (a,b) (Scalar a))
+    in (tconcat' ta tb, PairShape sa sb :: ShapeInfo (a,b) (Scalar a))
   fromTensor (t,PairShape sa sb) =
-    let (ta,tb) = case tsplitAt (shapeSize sa) t of
-          Left err -> error err
-          Right out -> out
+    let (ta,tb) = tsplitAt' (shapeSize sa) t
     in (fromTensor (ta,sa), fromTensor (tb,sb))
 
 instance (ToTensor a, TensorScalar (Scalar a), Scalar a ~ Scalar [a]) => ToTensor [a] where
-  toTensor [] = (fromList (0:.Z) [], ListShape [])
+  toTensor [] = (tensorFromList' (0:.Z) [], ListShape [])
   toTensor (x:xs) = let (tx, sx) = toTensor x
                         (txs, sxs) = toTensor xs in
                      case sxs of
-                      ListShape sxs' -> (tconcat tx txs, ListShape (sx:sxs'))
+                      ListShape sxs' -> (tconcat' tx txs, ListShape (sx:sxs'))
   fromTensor (_, ListShape []) = []
   fromTensor (t, ListShape (sx:sxs)) =
-    let (tx, txs) = case tsplitAt (shapeSize sx) t of
-          Left err -> error err
-          Right out -> out
+    let (tx, txs) = tsplitAt' (shapeSize sx) t
     in fromTensor (tx,sx) : fromTensor (txs, ListShape sxs)
-

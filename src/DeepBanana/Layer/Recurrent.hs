@@ -12,13 +12,11 @@ module DeepBanana.Layer.Recurrent (
   , lsum
   ) where
 
-import Control.Category
-import Control.Monad.State
-import Data.VectorSpace
+import DeepBanana.Exception
 import DeepBanana.Layer
 import DeepBanana.Layer.CUDA
+import DeepBanana.Prelude
 import DeepBanana.Tensor
-import Prelude hiding ((.), id)
 
 data family Base t :: * -> *
 
@@ -157,6 +155,8 @@ lzip = combinePasses' fwdZip bwdZip
   where fwdZip (xs,ys) = return $ zip xs ys
         bwdZip _ _ = return unzip
 
-recMlrCost :: (Monad m, TensorScalar a)
+recMlrCost :: (Monad m, MonadError t m, Variant t IncompatibleShape,
+               Variant t IncompatibleSize, Variant t OutOfMemory, Exception t,
+               TensorScalar a)
            => Dim 2 -> Layer m a '[] ([Tensor 2 a], [Tensor 2 a]) (Tensor 1 a)
 recMlrCost s = lzip >+> cmap (mlrCost s) >+> lmean

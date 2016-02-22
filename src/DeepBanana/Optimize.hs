@@ -11,18 +11,14 @@ module DeepBanana.Optimize (
   , rmsprop
   , runRMSProp
   ) where
-import Control.Monad.Morph
-import Control.Monad.Trans
-import Control.Monad.State
-import Control.Monad.RWS
-import Control.Monad.Reader
-import Data.VectorSpace
-
-import Pipes
+import ClassyPrelude
 import Pipes.Lift
 
+import DeepBanana.Exception
 import DeepBanana.Layer
+import DeepBanana.Prelude
 import DeepBanana.Tensor
+import DeepBanana.Tensor.Exception
 
 sgd :: (Monad m, VectorSpace w)
     => (Scalar w -> w -> w -> m w) -- update function
@@ -121,9 +117,8 @@ instance forall s w n
          . (TensorScalar s, HLElemwiseMax s w, Scalar (HLSpace s w) ~ s, Shape (Dim n))
          => HLElemwiseMax s (Tensor n s ': w) where
   hlElemwiseMax (HLS (HCons t1 w1)) (HLS (HCons t2 w2)) =
-    let t = case elementwiseMax t1 t2 of 
-              Left err -> error $ "Couldn't compute elementwise max: " ++ err
-              Right out -> out in
+    let t = unsafeRunExcept (elementwiseMax t1 t2 ::
+                             Either (Coproduct '[OutOfMemory,IncompatibleShape]) (Tensor n s)) in
     HLS $ HCons t (unHLS (hlElemwiseMax (HLS w1) (HLS w2) :: HLSpace s w))
 
 rmsprop :: (VectorSpace (HLSpace s w), Monad m, HLElemwiseMax s w, Real s,

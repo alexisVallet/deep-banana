@@ -10,39 +10,38 @@ module DeepBanana.Layer.CUDA.Cublas (
   ) where
 
 import qualified Foreign.CUDA.Cublas as Cublas
-import Control.Monad.Except
 import Control.Monad.Primitive
-import Control.Monad.ST
-import Control.Monad.Trans
-import Data.Proxy
-import Data.IORef
-import GHC.TypeLits
-import Prelude hiding (id, (.))
+
 import System.IO.Unsafe
 import Unsafe.Coerce
 
+import DeepBanana.Exception
+import DeepBanana.Layer
+import DeepBanana.Prelude
 import DeepBanana.Tensor
+import DeepBanana.Tensor.Exception
 import DeepBanana.Tensor.Mutable (MTensor, IOTensor)
 import qualified DeepBanana.Tensor.Mutable as MT
-import DeepBanana.Layer
 
 -- linear layer
-dot :: (Monad m, TensorScalar a)
+dot :: forall m t a
+     . (MonadError t m, Variant t IncompatibleShape, Variant t OutOfMemory,
+        Exception t, TensorScalar a)
     => Layer m a '[] (Tensor 2 a,Tensor 2 a) (Tensor 2 a)
 dot = combinePasses' fwddot bwddot
   where fwddot (x,w) = do
           let n :. m :. Z = shape x
               m' :. k :. Z = shape w
-          when (m /= m') $ error $
+          when (m /= m') $ throwVariant $ incompatibleShape $
             "Incompatible shapes " ++ show (shape x) ++ " and " ++ show (shape w) ++ " for dot product."
-          return $ runST $ do
+          embedExcept $ runST $ runExceptT $ do
             mw <- unsafeThaw w
             mx <- unsafeThaw x
             out <- MT.emptyTensor $ n :. k :. Z
             gemmFwd cublasHandle Cublas.N Cublas.N 1 mx mw 0 out
             unsafeFreeze out
         bwddot (x,w) out = do
-          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
+          return $ broadcast' (shape out) >>> \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
             mw <- unsafeThaw w
             mx <- unsafeThaw x
             mupgrad <- unsafeThaw upgrad
@@ -54,96 +53,108 @@ dot = combinePasses' fwddot bwddot
             w' <- unsafeFreeze mw'
             return (x', w')
 
-linear :: (Monad m, TensorScalar a)
+linear :: (MonadError t m, Variant t IncompatibleShape, Variant t OutOfMemory,
+           Exception t, TensorScalar a)
        => Layer m a '[Tensor 2 a] (Tensor 2 a) (Tensor 2 a)
 linear = Layer $ \(HLS (HCons w HNil)) x -> do
   (y, bwd) <- forwardBackward dot (HLS HNil) (x,w)
-  return (y, unsafeBroadcast (shape y) >>> \y' -> let (_, (x',w')) = bwd y'
+  return (y, broadcast' (shape y) >>> \y' -> let (_, (x',w')) = bwd y'
                                                   in (HLS $ HCons w' HNil, x'))
 
 -- matrix sum reductions
-sumCols :: (Monad m, TensorScalar a)
+sumCols :: forall m t a
+         . (MonadError t m, Variant t OutOfMemory, Variant t IncompatibleShape,
+            Exception t, TensorScalar a)
         => Layer m a '[] (Tensor 2 a) (Tensor 1 a)
 sumCols = combinePasses' fwdsumcols bwdsumcols
-  where fwdsumcols x = do
-          return $ runST $ do
+  where fwdsumcols x = embedExcept $ runST $ runExceptT $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ 1 :. m :. Z
             mx <- unsafeThaw x
             gemmFwd cublasHandle Cublas.N Cublas.N 1 ones mx 0 out
             fout <- unsafeFreeze out
-            return $ unsafeReshape (m:.Z) fout
+            return $ reshape' (m:.Z) fout
         bwdsumcols x out = do
-          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
-            let n :. m :. Z = shape x
-            ones <- MT.ones $ 1 :. n :. Z
-            out <- MT.emptyTensor $ shape x
-            mupgrad <- fmap (MT.unsafeReshape $ 1 :. m :. Z) $ unsafeThaw upgrad
-            gemmBwdB cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
-            unsafeFreeze out
+          return $ broadcast' (shape out) >>>
+            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+              let n :. m :. Z = shape x
+              ones <- MT.ones $ 1 :. n :. Z
+              out <- MT.emptyTensor $ shape x
+              mupgrad <- fmap (MT.reshape' $ 1 :. m :. Z) $ unsafeThaw upgrad
+              gemmBwdB cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
+              unsafeFreeze out
 
-sumRows :: (Monad m, TensorScalar a)
+sumRows :: forall m t a
+         . (MonadError t m, Variant t OutOfMemory, Variant t IncompatibleShape,
+            Exception t, TensorScalar a)
         => Layer m a '[] (Tensor 2 a) (Tensor 1 a)
 sumRows = combinePasses' fwdsumrows bwdsumrows
   where fwdsumrows x = do
-          return $ runST $ do
+          embedExcept $ runST $ runExceptT $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ m :. 1 :. Z
             out <- MT.emptyTensor $ n :. 1 :. Z
             mx <- unsafeThaw x
             gemmFwd cublasHandle Cublas.N Cublas.N 1 mx ones 0 out
-            fmap (unsafeReshape $ n :. Z) $ unsafeFreeze out
+            fmap (reshape' $ n :. Z) $ unsafeFreeze out
         bwdsumrows x out = do
-          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
-            let n :. m :. Z = shape x
-            ones <- MT.ones $ m :. 1 :. Z
-            out <- MT.emptyTensor $ shape x
-            mupgrad <- fmap (MT.unsafeReshape $ n :. 1 :. Z) $ unsafeThaw upgrad
-            gemmBwdA cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
-            unsafeFreeze out
+          return $ broadcast' (shape out) >>>
+            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+              let n :. m :. Z = shape x
+              ones <- MT.ones $ m :. 1 :. Z
+              out <- MT.emptyTensor $ shape x
+              mupgrad <- fmap (MT.reshape' $ n :. 1 :. Z) $ unsafeThaw upgrad
+              gemmBwdA cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
+              unsafeFreeze out
 
-replicateAsRows :: (Monad m, TensorScalar a)
+replicateAsRows :: forall m t a
+                . (Monad m, MonadError t m, Variant t IncompatibleShape,
+                   Variant t OutOfMemory, Exception t, TensorScalar a)
                 => Int
                 -> Layer m a '[] (Tensor 1 a) (Tensor 2 a)
 replicateAsRows n = combinePasses' fwdRepRows bwdRepRows
   where fwdRepRows x = do
-          return $ runST $ do
+          embedExcept $ runST $ runExceptT $ do
             let m :. Z = shape x
             ones <- MT.ones $ n :. 1 :. Z
             out <- MT.emptyTensor $ n :. m :. Z
-            mx <- fmap (MT.unsafeReshape $ 1 :. m :. Z) $ unsafeThaw x
+            mx <- fmap (MT.reshape' $ 1 :. m :. Z) $ unsafeThaw x
             gemmFwd cublasHandle Cublas.N Cublas.N 1 ones mx 0 out
             unsafeFreeze out
         bwdRepRows x out = do
-          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
-            let m :. Z = shape x
-            ones <- MT.ones $ n :. 1 :. Z
-            out <- MT.emptyTensor $ 1 :. m :. Z
-            mupgrad <- unsafeThaw upgrad
-            gemmBwdB cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
-            unsafeFreeze $ MT.unsafeReshape (m :. Z) out
+          return $ broadcast' (shape out) >>>
+            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+              let m :. Z = shape x
+              ones <- MT.ones $ n :. 1 :. Z
+              out <- MT.emptyTensor $ 1 :. m :. Z
+              mupgrad <- unsafeThaw upgrad
+              gemmBwdB cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
+              unsafeFreeze $ MT.reshape' (m :. Z) out
 
-replicateAsCols :: (Monad m, TensorScalar a)
+replicateAsCols :: forall m t a
+                . (Monad m, MonadError t m, Variant t IncompatibleShape, Exception t,
+                   Variant t OutOfMemory, TensorScalar a)
                 => Int
                 -> Layer m a '[] (Tensor 1 a) (Tensor 2 a)
 replicateAsCols n = combinePasses' fwdRepCols bwdRepCols
   where fwdRepCols x = do
-          return $ runST $ do
+          embedExcept $ runST $ runExceptT $ do
             let m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ m :. n :. Z
-            mx <- fmap (MT.unsafeReshape $ m :. 1 :. Z) $ unsafeThaw x
+            mx <- fmap (MT.reshape' $ m :. 1 :. Z) $ unsafeThaw x
             gemmFwd cublasHandle Cublas.N Cublas.N 1 mx ones 0 out
             unsafeFreeze out
         bwdRepCols x out = do
-          return $ unsafeBroadcast (shape out) >>> \upgrad -> runST $ do
-            let m :. Z = shape x
-            ones <- MT.ones $ 1 :. n :. Z
-            out <- MT.emptyTensor $ m :. 1 :. Z
-            mupgrad <- unsafeThaw upgrad
-            gemmBwdA cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
-            unsafeFreeze $ MT.unsafeReshape (m :. Z) out
+          return $ broadcast' (shape out) >>>
+            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+              let m :. Z = shape x
+              ones <- MT.ones $ 1 :. n :. Z
+              out <- MT.emptyTensor $ m :. 1 :. Z
+              mupgrad <- unsafeThaw upgrad
+              gemmBwdA cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
+              unsafeFreeze $ MT.reshape' (m :. Z) out
 
 -- Utility functions leveraging CuBlas.
 -- GEMM wrapper, used to implement roughly everything else.
@@ -151,7 +162,9 @@ replicateAsCols n = combinePasses' fwdRepCols bwdRepCols
 -- matrices are in row-major order.
 -- Serves to implement nearly all the rest, including its
 -- own gradients.
-gemmFwd :: forall m a . (PrimMonad m, TensorScalar a)
+gemmFwd :: forall m t a
+        . (PrimMonad m, MonadError t m, Variant t IncompatibleShape,
+           TensorScalar a)
         => Cublas.Handle
         -> Cublas.Operation
         -> Cublas.Operation
@@ -176,7 +189,7 @@ gemmFwd handle transa transb alpha a b beta c = do
   -- on the property that the transpose operation
   -- will work on both column-major and row-major data
   -- seamlessly.
-  let shapeError = error $
+  let shapeError = throwVariant $ incompatibleShape $
         "Incompatible shapes/operations combination for matrix multiplication: "
         ++ show [ra, ca] ++ ", " ++ show [rb, cb] ++ ", " ++ show [rc, cc]
         ++ ", " ++ show transa ++ ", " ++ show transb
@@ -212,7 +225,8 @@ compop op Cublas.N = op
 compop Cublas.T Cublas.T = Cublas.N
 compop op1 op2 = error $ "Unsupported operations: " ++ show (op1, op2)
 
-gemmBwdA :: (PrimMonad m, TensorScalar a)
+gemmBwdA :: (PrimMonad m, MonadError t m, Variant t IncompatibleShape,
+             TensorScalar a)
          => Cublas.Handle
          -> Cublas.Operation
          -> Cublas.Operation
@@ -230,7 +244,8 @@ gemmBwdA handle transa transb alpha b upgrad out = do
     Cublas.T -> do
       gemmFwd handle transb Cublas.T alpha b upgrad 0 out
 
-gemmBwdB :: (PrimMonad m, TensorScalar a)
+gemmBwdB :: (PrimMonad m, MonadError t m, Variant t IncompatibleShape,
+             TensorScalar a)
          => Cublas.Handle
          -> Cublas.Operation
          -> Cublas.Operation
@@ -246,20 +261,23 @@ gemmBwdB handle transa transb alpha a upgrad out = do
     Cublas.T -> do
       gemmFwd handle Cublas.T transa alpha upgrad a 0 out
 
-gemmBwdC :: forall m a . (PrimMonad m, TensorScalar a)
+gemmBwdC :: forall m t a
+         . (PrimMonad m, MonadError t m, Variant t IncompatibleShape,
+            TensorScalar a)
          => Cublas.Handle
          -> a
          -> MTensor (PrimState m) 2 a
          -> MTensor (PrimState m) 2 a
          -> m ()
-gemmBwdC handle beta upgrad out = unsafePrimToPrim $ do
-  when (MT.shape upgrad /= MT.shape out) $ error $
+gemmBwdC handle beta upgrad out = do
+  when (MT.shape upgrad /= MT.shape out) $ throwVariant $ incompatibleShape $
     "Incompatible shape for GEMM backward pass argument C: "
     ++ show (MT.shape upgrad) ++ ", " ++ show (MT.shape out)
-  MT.withDevicePtr (unsafeCoerce upgrad :: IOTensor 2 a) $ \upgradptr -> do
-    MT.withDevicePtr (unsafeCoerce out :: IOTensor 2 a) $ \outptr -> do
-      Cublas.copy handle (size $ MT.shape upgrad) upgradptr 1 outptr 1
-      Cublas.scal handle (size $ MT.shape out) beta outptr 1
+  unsafePrimToPrim $ do
+    MT.withDevicePtr (unsafeCoerce upgrad :: IOTensor 2 a) $ \upgradptr -> do
+      MT.withDevicePtr (unsafeCoerce out :: IOTensor 2 a) $ \outptr -> do
+        Cublas.copy handle (size $ MT.shape upgrad) upgradptr 1 outptr 1
+        Cublas.scal handle (size $ MT.shape out) beta outptr 1
 
 global_cublas_handle :: IORef (Maybe Cublas.Handle)
 {-# NOINLINE global_cublas_handle #-}

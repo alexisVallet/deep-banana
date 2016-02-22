@@ -4,9 +4,9 @@ FFI wrapper to custom CUDA code needed for for HNN.
 -}
 module DeepBanana.Cubits where
 
-import Foreign
-import Foreign.C
 import Foreign.CUDA.Types
+
+import DeepBanana.Prelude
 
 #include <hnn_cubits.h>
 

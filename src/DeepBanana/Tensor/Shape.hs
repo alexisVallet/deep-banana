@@ -6,13 +6,10 @@ module DeepBanana.Tensor.Shape (
   , SCons(..)
   ) where
 
-import Control.DeepSeq
-import Data.Proxy
 import Data.Serialize
-import GHC.TypeLits
-import GHC.Generics
-import Data.HList.HList
 import Unsafe.Coerce
+
+import DeepBanana.Prelude hiding (get, put)
 
 infixr 3 :.
 data Z = Z

@@ -3,8 +3,7 @@
 Compositional layers which learn a set of weights through backpropagation.
 -}
 module DeepBanana.Layer (
-    module Control.Category
-  , Layer(..)
+    Layer(..)
   , HLSpace(..)
   , HList(..)
   , forward
@@ -23,14 +22,11 @@ module DeepBanana.Layer (
   , noWeights
   , effect
   ) where
-import Prelude hiding (id, (.))
-import Control.Category
-import Data.VectorSpace
-import Data.HList.HList
+
 import Data.HList.HListPrelude
-import Data.Proxy
 import Data.Serialize
-import Control.DeepSeq
+
+import DeepBanana.Prelude hiding (get, put)
 
 -- | A layer 'Layer m a w inp out' is a differentiable computation taking an input of
 -- type 'inp' alongside a list of weights 'w' to produce an output of type 'out' within

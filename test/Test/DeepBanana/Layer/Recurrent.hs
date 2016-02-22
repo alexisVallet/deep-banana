@@ -44,9 +44,9 @@ test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
                 <*> xavier (nb_features:.nb_output:.Z)
                 <*> xavier (nb_features:.nb_features:.Z)
           return $ HLS $ hEnd w'
-        h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01 :: CUDA (Tensor 2 CFloat)
+        h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01 :: CUDAT IO (Tensor 2 CFloat)
         upgrad = replicateM out_length $ normal (nb_samples:.nb_output:.Z) 0 0.01
-    runCUDA 42 $ check_backward recnet w h_0 upgrad
+    runCUDATEx 42 $ check_backward recnet w h_0 upgrad
 
 test_recMlrCost :: Spec
 test_recMlrCost = describe "DeepBanana.Layer.Recurrent.recMlrCost" $ do
@@ -57,7 +57,7 @@ test_recMlrCost = describe "DeepBanana.Layer.Recurrent.recMlrCost" $ do
         out_seq = replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
         labels = replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
         cost = recMlrCost (nb_samples:.nb_output:.Z) >+> toScalar
-    runCUDA 42 $ check_backward cost (return zeroV) (pure (,) <*> labels <*> out_seq) (return 1 :: CUDA CFloat)
+    runCUDATEx 42 $ check_backward cost (return zeroV) (pure (,) <*> labels <*> out_seq) (return 1 :: CUDAT IO CFloat)
 
 test_lunfold_and_recMlrCost :: Spec
 test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> recMlrCost" $ do
@@ -88,4 +88,4 @@ test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> 
           x <- uniform (nb_samples:.nb_features:.Z)
           labels <- replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
           return (labels,x)
-    runCUDA 42 $ check_backward fullNet w input (return 1 :: CUDA CFloat)
+    runCUDATEx 42 $ check_backward fullNet w input (return 1 :: CUDAT IO CFloat)

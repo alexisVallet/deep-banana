@@ -7,22 +7,16 @@ needed, although orphan instances for 'CFloat' and 'CDouble': 'Generic', 'NFData
 -}
 module DeepBanana.Tensor.TensorScalar (
     TensorScalar(..)
-  , CFloat, CDouble
+  , CFloat, CDouble, mySizeOf
   ) where
 
-import Foreign.C
-import Foreign.Storable
-import Data.Serialize
-import Control.DeepSeq
-import GHC.Generics
-import Data.VectorSpace
-import Data.Proxy
+import qualified Data.Serialize as S
 import qualified Foreign.CUDA as CUDA
 import qualified Foreign.CUDA.CuRAND as CuRAND
 import qualified Foreign.CUDA.Cublas as Cublas
 import qualified Foreign.CUDA.CuDNN as CuDNN
-
 import qualified DeepBanana.Cubits as Cubits
+import DeepBanana.Prelude
 
 instance Generic CFloat where
   type Rep CFloat = Rep Float
@@ -34,13 +28,16 @@ instance Generic CDouble where
   from cx = from (realToFrac cx :: Double)
   to rep = realToFrac (to rep :: Double)
 
-instance Serialize CFloat
-instance Serialize CDouble
+instance S.Serialize CFloat
+instance S.Serialize CDouble
+
+mySizeOf :: forall a . Storable a => Proxy a -> Int
+mySizeOf _ = sizeOf (error "mySizeOf: token parameter that shouldn't have been evaluated" :: a)
 
 -- | Type class for tensor scalars. Basically requires them to be storable, serializable,
 -- deepseqable numbers that can be handled by CUDA, Cublas, CuDNN and Haskell. Basically
 -- requires low-level numeric routines.
-class (Cublas.Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, Serialize a, NFData a)
+class (Cublas.Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, S.Serialize a, NFData a)
       => TensorScalar a where
   -- | The corresponding CuDNN datatype.
   datatype :: Proxy a -> CuDNN.DataType

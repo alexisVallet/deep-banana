@@ -1,26 +1,20 @@
 {-# LANGUAGE OverloadedStrings, FlexibleContexts #-}
 module MNIST where
 
-import Data.Binary.Get (runGet, getWord32be)
+import qualified Data.Binary.Get as Bin
 import DeepBanana
+import DeepBanana.Prelude
 import Codec.Compression.GZip
-import Control.Lens
-import Control.Monad
-import Control.Monad.Trans
-import Control.Monad.Except
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
+import Control.Lens hiding (index)
 import qualified Data.Attoparsec.ByteString as AP
-import Network.Wreq
-import Pipes
-import Prelude hiding ((.), id)
+import qualified Network.Wreq as Wreq
 import System.Directory
-import System.FilePath
-import Vision.Image as VI
+import System.FilePath (takeDirectory)
+import Vision.Image as VI hiding (index)
 import qualified Vision.Primitive as VP
 
 loadOrDownload :: (MonadIO m, MonadError String m)
-               => Maybe String -> FilePath -> m BS.ByteString
+               => Maybe String -> FilePath -> m ByteString
 loadOrDownload murl fpath = do
   dirExists <- liftIO $ doesDirectoryExist $ takeDirectory fpath
   when (not dirExists) $ throwError $
@@ -30,15 +24,15 @@ loadOrDownload murl fpath = do
    (False, Nothing) -> throwError
                        $ "File not found and no download URL provided: " ++ fpath
    (False, Just url) -> liftIO $ do
-     putStrLn $ "File not found: " ++ fpath ++ "\nDownloading from: " ++ url
-     resp <- get url
-     LBS.writeFile fpath $ resp ^. responseBody
-     putStrLn $ "Finished downloading."
-     return $ LBS.toStrict $ decompress $ resp ^. responseBody
-   _ -> liftIO $ fmap (LBS.toStrict . decompress) $ LBS.readFile fpath
+     putStrLn $ "File not found: " ++ pack fpath ++ "\nDownloading from: " ++ pack url
+     resp <- Wreq.get url
+     writeFile fpath $ resp ^. Wreq.responseBody
+     putStrLn "Finished downloading."
+     return $ toStrict $ decompress $ resp ^. Wreq.responseBody
+   _ -> liftIO $ fmap (toStrict . decompress) $ readFile fpath
 
 parseInt :: AP.Parser Int
-parseInt = fmap (fromIntegral . runGet getWord32be . LBS.fromStrict) $ AP.take 4
+parseInt = fmap (fromIntegral . Bin.runGet Bin.getWord32be . fromStrict) $ AP.take 4
 
 ubyte_images :: AP.Parser [Grey]
 ubyte_images = do
@@ -52,7 +46,7 @@ ubyte_images = do
     imgbstring <- AP.take (nb_rows * nb_cols)
     return $ (fromFunction (VP.Z VP.:. nb_rows VP.:. nb_cols) $
               \(VP.Z VP.:. i VP.:. j) ->
-              GreyPixel $ BS.index imgbstring (fromIntegral $ j + i * nb_cols)) :: AP.Parser Grey
+              GreyPixel $ unsafeIndex imgbstring (fromIntegral $ j + i * nb_cols)) :: AP.Parser Grey
 
 ubyte_labels :: AP.Parser [Int]
 ubyte_labels = do

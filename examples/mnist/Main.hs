@@ -1,31 +1,19 @@
-{-# LANGUAGE FlexibleContexts, DataKinds, TypeFamilies, RankNTypes #-}
+{-# LANGUAGE DataKinds, OverloadedStrings, FlexibleContexts, TypeFamilies #-}
 module Main where
 
-import qualified Data.Vector.Storable as V
-import Data.HList.HList
-import Data.Maybe
-import Data.Word
-import DeepBanana hiding (load_mnist)
-import DeepBanana.Layer.CUDA
-import Control.DeepSeq
-import Control.Monad
-import Control.Monad.Except
-import Control.Monad.Identity
-import Control.Monad.Morph
-import Control.Monad.State
-import Control.Monad.Trans
+import Data.Maybe (fromJust)
+import qualified Data.Vector.Storable as VS
+import DeepBanana
+import DeepBanana.Prelude
 import MNIST
-import Pipes
 import qualified Pipes.Prelude as P
-import Prelude hiding ((.), id)
-import System.FilePath
 import System.Mem
-import Vision.Image
+import Vision.Image hiding (map)
 import Vision.Image.Storage.DevIL
 
 type Weights = '[Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat] 
 
-type Training = ExceptT String (VanillaT CFloat (CUDAT IO))
+type Training = VanillaT CFloat (CUDAT IO)
 
 main :: IO ()
 main = do
@@ -49,14 +37,14 @@ main = do
   case pure (,) <*> emnist_train <*> emnist_val of
    Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
    Right (mnist_train,mnist_val) -> do
-     merr <- runCUDAT 42 $ runVanilla 0.01 $ runExceptT $ do
-       w_0 <- lift $ lift $ init_weights nb_labels
+     merr <- runCUDAT 42 $ runVanilla 0.01 $ do
+       w_0 <- init_weights nb_labels
        let
          nb_val_batches = fromIntegral $ (length mnist_val `div` batch_size) :: CFloat
          preprocessing =
            P.map (\(i,l) -> (i, [l]))
            >-> batch_images nb_labels batch_size
-           >-> P.map (\(b,l) -> (V.map grey_to_float b, l))
+           >-> P.map (\(b,l) -> (VS.map grey_to_float b, l))
            >-> batch_to_gpu (batch_size:.1:.28:.28:.Z) (batch_size:.nb_labels:.Z)
            :: Pipe (Grey, Int) (Tensor 4 CFloat, Tensor 2 CFloat) Training ()
          cost_grad' w b = cost_grad batch_size nb_labels w b
@@ -68,14 +56,11 @@ main = do
          >-> runEvery 100 (\x -> deepseq x $ liftIO $ performGC)
          >-> print_info
      case merr of
-      Left err -> error err
+      Left err -> throw err
       Right _ -> return ()
 
 cudaToTraining :: CUDA a -> Training a
-cudaToTraining cuda =
-   lift -- Dropping ExceptT for laziness
-   $ lift -- Dropping VanillaT
-   $ hoist generalize cuda -- Swapping base from IO to Identity
+cudaToTraining cuda = lift $ hoist (hoist generalize) cuda
 
 nnet :: Int -> Int
      -> Layer CUDA CFloat Weights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
@@ -104,7 +89,7 @@ cost_grad batch_size nb_labels w_t (batch,labels) = do
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
 
-init_weights :: (MonadState Generator m) => Int -> m (HLSpace CFloat Weights)
+init_weights :: Int -> Training (HLSpace CFloat Weights)
 init_weights nb_labels = do
   let he_init s@(_:.c:.fh:.fw:.Z) =
         normal s 0 (sqrt (2 / (fromIntegral c * fromIntegral fh * fromIntegral fw)))
@@ -134,5 +119,5 @@ print_info = flip evalStateT (InfoState Nothing) $ forM_ [1..] $ \i -> do
        modify (\s -> s {rolling_cost = Just $ cur_roll_cost * 0.9 + cost * 0.1})
     fmap fromJust $ gets rolling_cost
   when (i `rem` 50 == 0) $ do
-    liftIO $ putStrLn $ "Iteration " ++ show i
-      ++ " cost rolling average: " ++ show roll_cost
+    putStrLn $ "Iteration " ++ pack (show i) ++ " cost rolling average: "
+      ++ pack (show roll_cost)

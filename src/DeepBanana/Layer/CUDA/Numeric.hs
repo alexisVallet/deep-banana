@@ -7,9 +7,8 @@ module DeepBanana.Layer.CUDA.Numeric (
   , add
   ) where
 
-import Data.VectorSpace
-
 import DeepBanana.Layer
+import DeepBanana.Prelude
 
 -- elementwise log (useful for cost fct)
 llog :: (Monad m, Floating t)
