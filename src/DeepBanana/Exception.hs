@@ -5,15 +5,18 @@ module DeepBanana.Exception (
   , Coproduct(..)
   , Variant(..)
   , throwVariant
+  , catchVariant
   , unsafeRunExcept
   , embedExcept
   , runExceptTAs
+  , attemptGCThenRetryOn
   ) where
 
 import DeepBanana.Prelude
 import Data.Typeable
 import GHC.SrcLoc
 import GHC.Stack
+import System.Mem
 
 data Coproduct (l :: [*]) where
   Left' :: a -> Coproduct (a ': l)
@@ -57,6 +60,15 @@ instance (Show a, Show (Coproduct b), Typeable a, Typeable b, Typeable (Coproduc
 throwVariant :: (MonadError t m,  Variant t e) => e -> m a
 throwVariant = throwError . setVariant
 
+catchVariant :: forall m t e a
+             . (MonadError t m, Variant t e)
+             => m a -> (e -> m a) -> m a
+catchVariant action handler =
+  let handler' t = case getVariant t :: Maybe e of
+        Nothing -> throwError t
+        Just e -> handler e
+  in catchError action handler'
+
 data WithStack e = WithStack {
     exception :: e
   , callStack :: String
@@ -86,3 +98,12 @@ embedExcept ea = do
 
 runExceptTAs :: Proxy t -> ExceptT t m a -> m (Either t a)
 runExceptTAs _ action = runExceptT action
+
+attemptGCThenRetryOn :: forall m t e a
+                     . (MonadIO m, MonadError t m, Variant t e)
+                     => Proxy e -> m a -> m a
+attemptGCThenRetryOn _ action = do
+  let handler e = do
+        liftIO $ performGC
+        action
+  action `catchVariant` (handler :: e -> m a)

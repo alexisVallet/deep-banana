@@ -30,13 +30,15 @@ module DeepBanana.Tensor.Mutable (
   ) where
 
 import Control.Monad.Primitive (unsafePrimToPrim)
-import Foreign.Concurrent
 import qualified Foreign.CUDA as CUDA
 import qualified Foreign.CUDA.CuDNN as CuDNN
+import Foreign.ForeignPtr
 import Foreign.Marshal
 import System.IO.Unsafe
+import System.Mem
 import Unsafe.Coerce
 
+import DeepBanana.Cubits (freeDevicePtr)
 import DeepBanana.Exception
 import DeepBanana.Prelude
 import DeepBanana.Tensor.Exception
@@ -72,16 +74,18 @@ emptyTensor shp = do
                 return $ Left $ outOfMemory $
                 "emptyTensor: failed to allocate a tensor of shape " ++ show shp
               err -> error $ "emptyTensor: unhandled exception: " ++ show err
-        edvcptr <- liftIO $ (fmap Right $ CUDA.mallocArray (size shp)) `catch` handleOutOfMem
+        edvcptr <- liftIO (fmap Right (CUDA.mallocArray (size shp)))
+                   `catch` handleOutOfMem
         case edvcptr of
          Left err -> throwError err
          Right dvcptr -> do
-           let finalizer = CUDA.free dvcptr
-           datafptr <- liftIO $ Foreign.Concurrent.newForeignPtr
+           datafptr <- liftIO $ newForeignPtr freeDevicePtr
                        (CUDA.useDevicePtr dvcptr)
-                       finalizer
            return $ MTensor shp datafptr
-  eres <- unsafePrimToPrim $ runExceptT $ (action :: ExceptT OutOfMemory IO (MTensor (PrimState m) n a))
+  eres <- unsafePrimToPrim
+          $ runExceptT
+          $ attemptGCThenRetryOn (Proxy :: Proxy OutOfMemory)
+          $ (action :: ExceptT OutOfMemory IO (MTensor (PrimState m) n a))
   case eres of
    Left err -> throwVariant err
    Right res -> return res

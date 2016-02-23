@@ -158,7 +158,7 @@ nhwc_to_nchw = combinePasses' fwdTrans bwdTrans
               unsafeFreeze mu'
 
 -- Helper functions to deal with low-level boilerplate of CuDNN.
-withDescriptor :: (MonadIO m, Storable desc)
+withDescriptor :: (MonadIO m, MonadError t m, Variant t AllocFailed, Storable desc)
                => (Ptr desc -> m CuDNN.Status) -- creation fct
                -> (desc -> m CuDNN.Status) -- set fct
                -> (desc -> m CuDNN.Status) -- destroy fct
@@ -166,7 +166,7 @@ withDescriptor :: (MonadIO m, Storable desc)
                -> m a
 withDescriptor create set destroy action = do
   descptr <- liftIO $ malloc
-  create descptr
+  attemptGCThenRetryOn (Proxy :: Proxy AllocFailed) $ create descptr
   desc <- liftIO $ peek descptr
   liftIO $ free descptr
   set desc
@@ -279,8 +279,9 @@ unsafeIOToPrim = unsafePrimToPrim
 convolution2dFwd :: forall t m a
                  . (PrimMonad m, MonadError t m, Variant t AllocFailed,
                     Variant t BadParam, Variant t NotSupported,
-                    Variant t MemoryAllocation, Variant t MappingError,
-                    Variant t ExecutionFailed, Variant t OutOfMemory, TensorScalar a)
+                    Variant t MappingError, Variant t ExecutionFailed,
+                    Variant t OutOfMemory, Variant t MemoryAllocation,
+                    TensorScalar a)
                  => CuDNN.Handle
                  -> (Int,Int)
                  -> (Int,Int)
@@ -309,8 +310,9 @@ convolution2dFwd handle (padh,padw) (strh,strw) algo fmaps filters = do
                 wkspcsizeptr
               liftIO $ peek wkspcsizeptr
             liftIO $ free wkspcsizeptr
-            workspace <- handleCUDAException (Proxy :: Proxy MemoryAllocation)
-                         $ CUDA.mallocArray $ fromIntegral workspacesize
+            workspace <- attemptGCThenRetryOn (Proxy :: Proxy MemoryAllocation)
+                         $ handleCUDAException (Proxy :: Proxy MemoryAllocation)
+                         $ CUDA.mallocArray (fromIntegral workspacesize)
             -- allocate alpha and beta
             alpha <- liftIO $ newArray [1]
             beta <- liftIO $ newArray [0]

@@ -53,7 +53,6 @@ main = do
          $ forever (randomize mnist_train)
          >-> preprocessing
          >-> optimize
-         >-> runEvery 100 (\x -> deepseq x $ liftIO $ performGC)
          >-> print_info
      case merr of
       Left err -> throw err

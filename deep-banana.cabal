@@ -68,6 +68,7 @@ library
                      , MultiParamTypeClasses
                      , NoImplicitPrelude
                      , ImplicitParams
+                     , OverloadedStrings
   Extra-libraries:     hnn_cubits
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
 

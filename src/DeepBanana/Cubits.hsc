@@ -173,3 +173,7 @@ foreign import ccall "broadcast_copy"
 
 foreign import ccall "broadcast_copyDouble"
   broadcast_copyDouble :: CInt -> CSize -> DevicePtr CDouble -> DevicePtr CInt -> DevicePtr CDouble -> DevicePtr CInt -> IO ()
+
+foreign import ccall "&freeDevicePtr"
+  freeDevicePtr :: FunPtr (Ptr a -> IO ())
+
