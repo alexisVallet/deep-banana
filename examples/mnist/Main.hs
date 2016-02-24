@@ -40,19 +40,27 @@ main = do
      merr <- runCUDAT 42 $ runVanilla 0.01 $ do
        w_0 <- init_weights nb_labels
        let
-         nb_val_batches = fromIntegral $ (length mnist_val `div` batch_size) :: CFloat
+         nb_val_batches = length mnist_val `div` batch_size
          preprocessing =
            P.map (\(i,l) -> (i, [l]))
            >-> batch_images nb_labels batch_size
            >-> P.map (\(b,l) -> (VS.map grey_to_float b, l))
            >-> batch_to_gpu (batch_size:.1:.28:.28:.Z) (batch_size:.nb_labels:.Z)
            :: Pipe (Grey, Int) (Tensor 4 CFloat, Tensor 2 CFloat) Training ()
+         validate (c,w) = do
+           sumCost <- P.sum $ randomize mnist_val
+                      >-> preprocessing
+                      >-> P.mapM (\batch -> fmap fst $ cost_grad' w batch)
+                      >-> P.take nb_val_batches
+           putStrLn $ "Validation cost: "
+             ++ pack (show (sumCost / fromIntegral nb_val_batches))
          cost_grad' w b = cost_grad batch_size nb_labels w b
          optimize = sgd vanilla cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) Training ()
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
          >-> optimize
+         >-> runEvery 1000 validate
          >-> print_info
      case merr of
       Left err -> throw err
