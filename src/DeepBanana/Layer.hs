@@ -1,9 +1,10 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilies, RankNTypes #-}
 {-|
 Compositional layers which learn a set of weights through backpropagation.
 -}
 module DeepBanana.Layer (
     Layer(..)
+  , Layer'
   , HLSpace(..)
   , HList(..)
   , forward
@@ -46,6 +47,33 @@ import DeepBanana.Prelude hiding (get, put)
 newtype Layer m a (w :: [*]) inp out = Layer {
   forwardBackward :: HLSpace a w -> inp -> m (out, out -> (HLSpace a w, inp))
   }
+
+instance (Monad m, AdditiveGroup out, AdditiveGroup inp, AdditiveGroup (HLSpace a w))
+         => AdditiveGroup (Layer m a w inp out) where
+  l1 ^+^ l2 = Layer $ \w inp -> do
+    (out1, bwd1) <- forwardBackward l1 w inp
+    (out2, bwd2) <- forwardBackward l2 w inp
+    return (out1 ^+^ out2, \out' -> let (w1', inp1') = bwd1 out'
+                                        (w2', inp2') = bwd2 out' in
+                                     (w1' ^+^ w2', inp1' ^+^ inp2'))
+  zeroV = Layer $ \w inp -> do
+    return (zeroV, \_ -> (zeroV, zeroV))
+  negateV l = Layer $ \w inp -> do
+    (out, bwd) <- forwardBackward l w inp
+    return (negateV out, \out' -> negateV $ bwd out')
+
+instance (Monad m, VectorSpace out, VectorSpace inp, VectorSpace (HLSpace a w),
+          Scalar out ~ a, Scalar inp ~ a, Scalar (HLSpace a w) ~ a)
+         => VectorSpace (Layer m a w inp out) where
+  type Scalar (Layer m a w inp out) = a
+  x *^ l = Layer $ \w inp -> do
+    (out, bwd) <- forwardBackward l w inp
+    return (x *^ out, \out' -> let (w', inp') = bwd out' in
+                                (x *^ w', x *^ inp'))
+
+type Layer' m w a b = (VectorSpace a, VectorSpace (HLSpace (Scalar a) w),
+                       Scalar a ~ Scalar (HLSpace (Scalar a) w))
+                    => Layer m (Scalar a) w a b
 
 -- | Runs the forward pass of a layer.
 forward :: (Monad m) => Layer m a w inp out -> HLSpace a w -> inp -> m out

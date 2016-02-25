@@ -1,6 +1,7 @@
-{-# LANGUAGE TypeFamilies, DataKinds, ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies, DataKinds, ScopedTypeVariables, ImplicitParams #-}
 module DeepBanana.Layer.Recurrent (
-    CFunctor(..)
+    module DeepBanana.Layer.Recurrent.Exception
+  , CFunctor(..)
   , CFoldable(..)
   , CUnfoldable(..)
   , Base(..)
@@ -12,10 +13,13 @@ module DeepBanana.Layer.Recurrent (
   , lsum
   ) where
 
+import GHC.Stack
+
 import DeepBanana.Exception
 import DeepBanana.Layer
 import DeepBanana.Layer.CUDA
 import DeepBanana.Prelude
+import DeepBanana.Layer.Recurrent.Exception
 import DeepBanana.Tensor
 
 data family Base t :: * -> *
@@ -47,36 +51,62 @@ data instance Base [a] b = Nil
 -- Also requires somewhat janky instances for AdditiveGroup and VectorSpace.
 -- To be fixed eventually with a proper fixed size list interface, so at least users
 -- have type safety (though library code itself doesn't).
+incompatibleBackwardPass :: (?loc :: CallStack) => [a] -> [a] -> IncompatibleLength
+incompatibleBackwardPass out upgrad =
+  incompatibleLength $ "Incompatible length for the list backward pass input. It should have the same length as the forward pass output.\nForward pass output length: " ++ show (length out) ++ "\nBackward pass input length: " ++ show (length upgrad)
+
 instance (Monad m, AdditiveGroup (HLSpace s w))
          => CFunctor (Layer m s w) (Base [c]) where
   cmap l = Layer $ \w bca -> case bca of
-    Nil -> return (Nil, \Nil -> (zeroV, Nil))
+    Nil -> return (Nil, \xs -> case xs of
+                                Nil -> (zeroV, Nil)
+                                _ -> throw
+                                     $ incompatibleLength
+                                     $ "CFunctor (Base [c]): incompatible backward pass, expected Nil, got Cons.")
     Cons c a -> do
       ~(b, bwdb) <- forwardBackward l w a
-      return (Cons c b, \(Cons c' b') -> let (w', a') = bwdb b' in
-                                          (w', Cons c' a'))
+      return (Cons c b, \xs -> case xs of
+                                    Cons c' b' -> let (w', a') = bwdb b' in
+                                                   (w', Cons c' a')
+                                    _ -> throw
+                                         $ incompatibleLength
+                                         $ "CFunctor (Base [c]): incompatible backward pass, expected Cons, got Nil.")
 
 instance (Monad m, AdditiveGroup (HLSpace s w)) => CFunctor (Layer m s w) [] where
   cmap l = Layer $ \w as -> case as of
-    [] -> return ([], \[] -> (zeroV, []))
+    [] -> return ([], \xs -> case xs of
+                              [] -> (zeroV, [])
+                              _ -> throw $ incompatibleBackwardPass [] xs)
     (x:xs) -> do
       (y, bwdy) <- forwardBackward l w x
       (ys, bwdys) <- forwardBackward (cmap l) w xs
-      return (y:ys, \(y':ys') -> let (w2', xs') = bwdys ys'
-                                     (w1', x') = bwdy y' in
-                                  (w1' ^+^ w2', x':xs'))
+      return (y:ys, \upgrad -> case upgrad of
+                                    (y':ys') -> let (w2', xs') = bwdys ys'
+                                                    (w1', x') = bwdy y' in
+                                                (w1' ^+^ w2', x':xs')
+                                    _ -> throw $ incompatibleBackwardPass (y:ys) upgrad)
 
 instance (Monad m, AdditiveGroup (HLSpace s w))
          => CFoldable (Layer m s w) [a] where
   cproject = Layer $ \w as -> case as of
-    [] -> return (Nil, \Nil -> (zeroV, []))
-    ~(a:as) -> return (Cons a as, \(Cons a' as') -> (zeroV, a':as'))
+    [] -> return (Nil, \xs -> case xs of
+                               Nil -> (zeroV, [])
+                               _ -> throw $ incompatibleLength
+                                    $ "CFoldable (Layer m s w) [a]: incompatible backward pass, expected Nil, got Cons.")
+    ~(a:as) -> return (Cons a as, \xs -> case xs of
+                                          Cons a' as' -> (zeroV, a':as')
+                                          _ -> throw $ incompatibleLength
+                                               $ "CFoldable (Layer m s w) [a]: incompatible backward pass, expected Cons, got Nil.")
 
 instance (Monad m, AdditiveGroup (HLSpace s w))
          => CUnfoldable (Layer m s w) [a] where
   cembed = Layer $ \w as -> case as of
-    Nil -> return ([], \[] -> (zeroV, Nil))
-    ~(Cons a as) -> return (a:as, \(a':as') -> (zeroV, Cons a' as'))
+    Nil -> return ([], \xs -> case xs of
+                               [] -> (zeroV, Nil)
+                               _ -> throw $ incompatibleBackwardPass [] xs)
+    ~(Cons a as) -> return (a:as, \xs -> case xs of
+                             (a':as') -> (zeroV, Cons a' as')
+                             _ -> throw $ incompatibleBackwardPass (a:as) xs)
 
 baseToMaybePair :: (Monad m, AdditiveGroup (HLSpace s w))
                 => Layer m s w (Base [a] b) (Maybe (a, b))
@@ -131,6 +161,7 @@ instance AdditiveGroup a => AdditiveGroup [a] where
   negateV = fmap negateV
   [] ^+^ [] = []
   (x:xs) ^+^ (y:ys) = (x ^+^ y) : (xs ^+^ ys)
+  xs ^+^ ys = throw $ incompatibleLength $ "AdditiveGroup [a]: can't add lists of different length: " ++ show (length xs) ++ " and " ++ show (length ys)
 
 instance (VectorSpace a) => VectorSpace [a] where
   type Scalar [a] = Scalar a

@@ -24,6 +24,7 @@ library
                      , DeepBanana.Layer.CUDA.CuRAND
                      , DeepBanana.Layer.CUDA.Numeric
                      , DeepBanana.Layer.Recurrent
+                     , DeepBanana.Layer.Recurrent.Exception
                      , DeepBanana.Tensor
                      , DeepBanana.Tensor.Exception
                      , DeepBanana.Tensor.TensorScalar
