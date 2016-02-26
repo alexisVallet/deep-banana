@@ -9,6 +9,7 @@ module DeepBanana.Prelude (
   , module Control.Monad.State
   , module Control.Monad.Morph
   , module Control.Monad.ST
+  , module Control.Monad.Trans.Identity
   , module Data.HList.HList
   , module Data.Proxy
   , module Data.Ratio
@@ -36,6 +37,7 @@ import Control.Monad.Except (
   , mapExcept
   , withExcept
   )
+import Control.Monad.Morph
 import Control.Monad.Reader (
     MonadReader(..)
   , ReaderT(..)
@@ -81,7 +83,10 @@ import Control.Monad.State (
   , mapStateT
   , withStateT
   )
-import Control.Monad.Morph
+import Control.Monad.Trans.Identity (
+    IdentityT(..)
+  , mapIdentityT
+  )
 import Control.Monad.ST
 import Data.HList.HList
 import Data.Proxy

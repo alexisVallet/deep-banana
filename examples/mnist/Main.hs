@@ -13,7 +13,7 @@ import Vision.Image.Storage.DevIL
 
 type Weights = '[Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat] 
 
-type Training = VanillaT CFloat (CUDAT IO)
+type Training = CUDAT IO
 
 main :: IO ()
 main = do
@@ -37,7 +37,7 @@ main = do
   case pure (,) <*> emnist_train <*> emnist_val of
    Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
    Right (mnist_train,mnist_val) -> do
-     merr <- runCUDAT 42 $ runVanilla 0.01 $ do
+     merr <- runCUDAT 42 $ do
        w_0 <- init_weights nb_labels
        let
          nb_val_batches = length mnist_val `div` batch_size
@@ -55,7 +55,7 @@ main = do
            putStrLn $ "Validation cost: "
              ++ pack (show (sumCost / fromIntegral nb_val_batches))
          cost_grad' w b = cost_grad batch_size nb_labels w b
-         optimize = sgd vanilla cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) Training ()
+         optimize = sgd (momentum 0.01 0.9) cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) Training ()
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
@@ -67,7 +67,7 @@ main = do
       Right _ -> return ()
 
 cudaToTraining :: CUDA a -> Training a
-cudaToTraining cuda = lift $ hoist (hoist generalize) cuda
+cudaToTraining = cudaHoist generalize
 
 nnet :: Int -> Int
      -> Layer CUDA CFloat Weights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
