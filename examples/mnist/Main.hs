@@ -55,7 +55,7 @@ main = do
            putStrLn $ "Validation cost: "
              ++ pack (show (sumCost / fromIntegral nb_val_batches))
          cost_grad' w b = cost_grad batch_size nb_labels w b
-         optimize = sgd (momentum 0.01 0.9) cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) Training ()
+         optimize = sgd (rmsprop 0.001 0.9 0.1) cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) Training ()
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing

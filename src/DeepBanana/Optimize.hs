@@ -1,9 +1,10 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes, TypeFamilies, UndecidableInstances #-}
 module DeepBanana.Optimize (
     sgd
   , Update(..)
   , vanilla
   , momentum
+  , rmsprop
   ) where
 import ClassyPrelude
 import Pipes.Lift
@@ -15,7 +16,7 @@ import DeepBanana.Tensor
 import DeepBanana.Tensor.Exception
 
 sgd :: (Monad m, MonadTrans t, Monad (t (Pipe a (Scalar w, w) m)), VectorSpace w)
-    => Update t w -- update function
+    => Update t (Pipe a (Scalar w, w) m) w -- update function
     -> (w -> a -> m (Scalar w, w)) -- cost function gradient
     -> w -- initial weights
     -> Pipe a (Scalar w, w) m () -- streams out cost weights for each iteration
@@ -28,12 +29,12 @@ sgd (Update update run) cost_grad w_0 = run $ evalStateT action w_0
           lift $ lift $ yield (cost, w_tp1)
           put w_tp1
 
-data Update t w = Update {
-    update :: forall m . (Monad m) => Scalar w -> w -> w -> t m w
-  , run :: forall a m . (Monad m) => t m a -> m a
+data Update t m w = Update {
+    update :: Scalar w -> w -> w -> t m w
+  , run :: forall a . t m a -> m a
   }
 
-vanilla :: (VectorSpace w) => Scalar w -> Update IdentityT w
+vanilla :: (VectorSpace w, Monad m) => Scalar w -> Update IdentityT m w
 vanilla lr = Update {
     update = \cost grad w_t -> do
        return $ w_t ^-^ lr *^ grad
@@ -41,7 +42,8 @@ vanilla lr = Update {
   }
 
 
-momentum :: (VectorSpace w) => Scalar w -> Scalar w -> Update (StateT (Maybe w)) w
+momentum :: (VectorSpace w, Monad m)
+         => Scalar w -> Scalar w -> Update (StateT (Maybe w)) m w
 momentum lr mfactor = Update {
     update = \cost grad w_t -> do
        mprev <- get
@@ -50,5 +52,42 @@ momentum lr mfactor = Update {
              Just prev -> (mfactor *^ prev ^-^ lr *^ grad)
        put $ Just new_update
        return $ w_t ^+^ new_update
+  , run = flip evalStateT Nothing
+  }
+
+class (Monad m, VectorSpace t) => HasElemwiseMax m t where
+  elemwiseMax :: t -> Scalar t -> m t
+
+instance (MonadError t m, Variant t OutOfMemory, Variant t IncompatibleShape,
+          Shape (Dim n), TensorScalar a)
+         => HasElemwiseMax m (Tensor n a) where
+  elemwiseMax t x = do
+    ones <- ones (shape t)
+    elementwiseMax t $ x *^ ones
+
+instance (Monad m) => HasElemwiseMax m (HLSpace s '[]) where
+  elemwiseMax _ _ = return $ HLS HNil
+
+instance forall m s l e
+         . (HasElemwiseMax m (HLSpace s l), HasElemwiseMax m e,
+            Scalar e ~ s, Scalar (HLSpace s l) ~ s)
+         => HasElemwiseMax m (HLSpace s (e ': l)) where
+  elemwiseMax (HLS (HCons x xs)) y = do
+    head <- elemwiseMax x y
+    tail <- elemwiseMax (HLS xs) y :: m (HLSpace s l)
+    return $ HLS $ HCons head $ unHLS tail
+
+rmsprop :: (HasElemwiseMax m w, Floating w, Floating (Scalar w))
+        => Scalar w -> Scalar w -> Scalar w -> Update (StateT (Maybe w)) m w
+rmsprop lr msqrFact maxRate = Update {
+    update = \cost grad w_t -> do
+       mMsqr <- get
+       let newMsqr = case mMsqr of
+             Nothing -> grad * grad
+             Just msqr -> msqrFact *^ msqr + (1 - msqrFact) *^ (grad * grad)
+           minNorm = lr / maxRate
+       put $ Just newMsqr
+       clipNorm <- lift $ elemwiseMax (sqrt newMsqr) minNorm
+       return $ w_t ^-^ lr *^ (grad / clipNorm)
   , run = flip evalStateT Nothing
   }
