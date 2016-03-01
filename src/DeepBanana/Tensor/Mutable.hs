@@ -1,6 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
 {-|
 Mutable GPU multi-dimensional dense numeric arrays, parametrized by the state token of
 some primitive state monad.

@@ -5,6 +5,7 @@ import Data.Maybe (fromJust)
 import qualified Data.Vector.Storable as VS
 import DeepBanana
 import DeepBanana.Prelude
+import qualified Foreign.CUDA as CUDA
 import MNIST
 import qualified Pipes.Prelude as P
 import System.Mem
@@ -34,6 +35,7 @@ main = do
   emnist_val <- runExceptT $ P.toListM
                 $ load_mnist (Just test_images_url) (Just test_labels_url)
                 test_images_file test_labels_file
+  CUDA.set 2
   case pure (,) <*> emnist_train <*> emnist_val of
    Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
    Right (mnist_train,mnist_val) -> do
@@ -96,10 +98,12 @@ cost_grad batch_size nb_labels w_t (batch,labels) = do
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
 
+he_init :: Dim 4 -> Training (Tensor 4 CFloat)
+he_init s@(_:.c:.fh:.fw:.Z) =
+  normal s 0 (sqrt (2 / (fromIntegral c * fromIntegral fh * fromIntegral fw)))
+
 init_weights :: Int -> Training (HLSpace CFloat Weights)
 init_weights nb_labels = do
-  let he_init s@(_:.c:.fh:.fw:.Z) =
-        normal s 0 (sqrt (2 / (fromIntegral c * fromIntegral fh * fromIntegral fw)))
   x <- pure hBuild
        <*> he_init (32:.1:.3:.3:.Z)
        <*> he_init (64:.32:.3:.3:.Z)
