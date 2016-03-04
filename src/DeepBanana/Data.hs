@@ -3,6 +3,7 @@ module DeepBanana.Data (
     module DeepBanana.Data.Exception
   , lazy_image_loader  
   , randomize
+  , randomLabelSubset
   , randomize_seq_length
   , map_pixels
   , batch_images
@@ -104,6 +105,12 @@ shuffle xs = do
         NSVM.write ar i vj
       V.unsafeFreeze ar
   return $ V.toList ar
+
+randomLabelSubset :: (MonadRandom m) => Int -> Pipe (a, [l]) (a, [l]) m ()
+randomLabelSubset subsetSize = do
+  (s, labels) <- await
+  rlabels <- lift $ shuffle labels
+  yield (s, take subsetSize labels)
 
 randomize :: (MonadRandom m) => [a] -> Producer a m ()
 randomize xs = do
