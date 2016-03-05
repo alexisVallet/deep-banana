@@ -188,8 +188,9 @@ batch_images_pad_labels :: forall i m t a
                            MonadError t m, Variant t EmptyBatch)
                         => Int
                         -> Int
+                        -> Int
                         -> Pipe (i, [Int]) (SVector (PixelChannel (ImagePixel i)), [SVector a]) m ()
-batch_images_pad_labels nb_labels batch_size = do
+batch_images_pad_labels nb_labels batch_size pad_label = do
   when (batch_size <= 0) $ throwVariant
     $ emptyBatch "batch_images_pad_labels: cannot build batch with size smaller than 1!"
   forever $ do
@@ -204,7 +205,9 @@ batch_images_pad_labels nb_labels batch_size = do
         oneHot mi = runST $ do
           mres <- MSV.replicate nb_labels 0
           case mi of
-           Nothing -> SV.unsafeFreeze mres
+           Nothing -> do
+             MSV.write mres pad_label 1
+             SV.unsafeFreeze mres
            Just i -> do
              MSV.write mres i 1
              SV.unsafeFreeze mres
