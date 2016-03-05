@@ -107,7 +107,7 @@ shuffle xs = do
   return $ V.toList ar
 
 randomLabelSubset :: (MonadRandom m) => Int -> Pipe (a, [l]) (a, [l]) m ()
-randomLabelSubset subsetSize = do
+randomLabelSubset subsetSize = forever $ do
   (s, labels) <- await
   rlabels <- lift $ shuffle labels
   yield (s, take subsetSize labels)
