@@ -21,6 +21,12 @@ test_recurrent_layers = do
   test_recMlrCost
   test_lunfold_and_recMlrCost
 
+
+xavier :: (Monad m, TensorScalar a) => Dim 2 -> CUDAT m (Tensor 2 a)
+xavier s@(nb_input:.nb_output:.Z) = do
+  x <- uniform s
+  return $ (sqrt 6 / sqrt (fromIntegral $ nb_input + nb_output)) * (x - 0.5)
+
 test_lunfold :: Spec
 test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
   it "Has a correct backward pass" $ do
@@ -28,9 +34,6 @@ test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
         nb_features = 16
         nb_output = 8
         out_length = 20
-        xavier s@(nb_input:.nb_output:.Z) = do
-          x <- uniform s
-          return $ (sqrt 6 / sqrt (fromIntegral $ nb_input + nb_output)) * (x - 0.5)
         h_to_out =
           linear
           >+> activation activation_tanh
@@ -66,9 +69,6 @@ test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> 
         nb_features = 8
         nb_output = 4
         out_length = 3
-        xavier s@(nb_input:.nb_output:.Z) = do
-          x <- uniform s
-          return $ (sqrt 6 / sqrt (fromIntegral $ nb_input + nb_output)) * (x - 0.5)
         h_to_out =
           linear
           >+> activation activation_tanh
