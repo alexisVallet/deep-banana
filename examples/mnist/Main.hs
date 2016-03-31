@@ -88,14 +88,6 @@ splitEvery n = L.unfoldr (\xs -> case splitAt n xs of
 argmax :: (Ord a) => [a] -> (Int, a)
 argmax = L.maximumBy (\(i1,x1) (i2,x2) -> compare x1 x2) . zip [0..]
 
-accuracy :: (Eq a, Floating b, Monad m) => Producer ([a],[a]) m () -> m b
-accuracy predGtProd = do
-  let sampleAcc (pred,gt) =
-        fromIntegral (length (L.intersect pred gt)) / fromIntegral (length (L.union pred gt))
-  acc <- P.sum $ predGtProd >-> P.map sampleAcc
-  len <- P.length predGtProd
-  return $ acc / fromIntegral len
-
 cudaToTraining :: CUDA a -> Training a
 cudaToTraining = cudaHoist generalize
 

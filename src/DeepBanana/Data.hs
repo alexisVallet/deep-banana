@@ -14,10 +14,14 @@ module DeepBanana.Data (
   , serializeTo
   , random_crop
   , resize_min_dim
+  , accuracy
+  , precision
+  , recall
   ) where
 
 import Control.Monad.Random
 import Data.List (unfoldr, transpose)
+import qualified Data.List as L
 import qualified Data.ByteString.Internal as BI
 import qualified Data.Serialize as Serialize
 import qualified Data.Vector as V
@@ -25,6 +29,7 @@ import qualified Data.Vector.Storable as SV
 import qualified Data.Vector.Storable.Mutable as MSV
 import qualified Data.Vector.Mutable as NSVM
 import Foreign.ForeignPtr
+import qualified Pipes.Prelude as P
 import Vision.Image as Friday hiding (read)
 import Vision.Image.Storage.DevIL
 import Vision.Primitive hiding (Shape, Z, (:.))
@@ -280,3 +285,27 @@ resize_min_dim _ min_dim = forever $ do
       resizedImg = resize TruncateInteger size img :: Manifest (ImagePixel i)
   resizedImgRes <- computeP resizedImg
   yield (resizedImgRes, l)
+
+accuracy :: (Eq a, Floating b, Monad m) => Producer ([a],[a]) m () -> m b
+accuracy predGtProd = do
+  let sampleAcc (pred,gt) =
+        fromIntegral (length (L.intersect pred gt)) / fromIntegral (length (L.union pred gt))
+  acc <- P.sum $ predGtProd >-> P.map sampleAcc
+  len <- P.length predGtProd
+  return $ acc / fromIntegral len
+
+precision :: (Eq a, Floating b, Monad m) => Producer ([a],[a]) m () -> m b
+precision predGtProd = do
+  let samplePrec (pred,gt) =
+        fromIntegral (length (L.intersect pred gt)) / fromIntegral (length pred)
+  prec <- P.sum $ predGtProd >-> P.map samplePrec
+  len <- P.length predGtProd
+  return $ prec / fromIntegral len
+
+recall :: (Eq a, Floating b, Monad m) => Producer ([a],[a]) m () -> m b
+recall predGtProd = do
+  let sampleRec (pred,gt) =
+        fromIntegral (length (L.intersect pred gt)) / fromIntegral (length gt)
+  recall <- P.sum $ predGtProd >-> P.map sampleRec
+  len <- P.length predGtProd
+  return $ recall / fromIntegral len
