@@ -1,15 +1,17 @@
 {-# LANGUAGE DataKinds, OverloadedStrings, FlexibleContexts, TypeFamilies #-}
 module Main where
 
+import Control.Arrow (first, second)
+import qualified Data.List as L
 import Data.Maybe (fromJust)
 import qualified Data.Vector.Storable as VS
-import DeepBanana
+import DeepBanana hiding (first, second)
 import DeepBanana.Prelude
 import qualified Foreign.CUDA as CUDA
 import MNIST
 import qualified Pipes.Prelude as P
 import System.Mem
-import Vision.Image hiding (map)
+import Vision.Image hiding (map, shape)
 import Vision.Image.Storage.DevIL
 
 type Weights = '[Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat] 
@@ -50,12 +52,22 @@ main = do
            >-> batch_to_gpu (batch_size:.1:.28:.28:.Z) (batch_size:.nb_labels:.Z)
            :: Pipe (Grey, Int) (Tensor 4 CFloat, Tensor 2 CFloat) Training ()
          validate (c,w) = do
-           sumCost <- P.sum $ randomize mnist_val
-                      >-> preprocessing
-                      >-> P.mapM (\batch -> fmap fst $ cost_grad' w batch)
-                      >-> P.take nb_val_batches
-           putStrLn $ "Validation cost: "
-             ++ pack (show (sumCost / fromIntegral nb_val_batches))
+           let sampleAccuracy = forever $ do
+                 (b,l) <- await
+                 confmat <- lift $ predict batch_size nb_labels w b
+                 let rows:.cols:.Z = shape confmat
+                     predAndGt =
+                       zip
+                       (splitEvery cols $ tensorToList confmat)
+                       (splitEvery cols $ tensorToList l)
+                 forM_ predAndGt $ \(predconfs,gtconfs) -> do
+                   let (predl,conf) = argmax predconfs
+                       (gtl,_) = argmax gtconfs
+                   yield ([predl],[gtl])
+           valAccuracy <- accuracy $ randomize mnist_val
+                          >-> preprocessing
+                          >-> sampleAccuracy
+           putStrLn $ "Validation accuracy: " ++ pack (show valAccuracy)
          cost_grad' w b = cost_grad batch_size nb_labels w b
          optimize = sgd (rmsprop 0.001 0.9 0.1) cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) Training ()
        runEffect
@@ -68,27 +80,46 @@ main = do
       Left err -> throw err
       Right _ -> return ()
 
+splitEvery :: Int -> [a] -> [[a]]
+splitEvery n = L.unfoldr (\xs -> case splitAt n xs of
+                                  ([],_) -> Nothing
+                                  (pref,suff) -> Just (pref,suff))
+
+argmax :: (Ord a) => [a] -> (Int, a)
+argmax = L.maximumBy (\(i1,x1) (i2,x2) -> compare x1 x2) . zip [0..]
+
+accuracy :: (Eq a, Floating b, Monad m) => Producer ([a],[a]) m () -> m b
+accuracy predGtProd = do
+  let sampleAcc (pred,gt) =
+        fromIntegral (length (L.intersect pred gt)) / fromIntegral (length (L.union pred gt))
+  acc <- P.sum $ predGtProd >-> P.map sampleAcc
+  len <- P.length predGtProd
+  return $ acc / fromIntegral len
+
 cudaToTraining :: CUDA a -> Training a
 cudaToTraining = cudaHoist generalize
+
+model :: Int -> Int -> Layer CUDA CFloat Weights (Tensor 4 CFloat) (Tensor 2 CFloat)
+model batch_size nb_labels =
+  let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
+             >+> activation activation_relu
+      pool = pooling2d (2,2) (1,1) (2,2) pooling_max
+      pool_avg = pooling2d (3,3) (1,1) (3,3) pooling_average_count_include_padding in
+  conv
+  >+> pool -- 14*14
+  >+> conv
+  >+> pool -- 7*7
+  >+> conv
+  >+> pool -- 3*3
+  >+> conv
+  >+> pool_avg -- 1*1
+  >+> lreshape (batch_size:.nb_labels:.Z)
 
 nnet :: Int -> Int
      -> Layer CUDA CFloat Weights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
 nnet batch_size nb_labels =
-  let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
-             >+> activation activation_relu
-      pool = pooling2d (2,2) (1,1) (2,2) pooling_max
-      pool_avg = pooling2d (3,3) (1,1) (3,3) pooling_average_count_include_padding
-      model = conv
-              >+> pool -- 14*14
-              >+> conv
-              >+> pool -- 7*7
-              >+> conv
-              >+> pool -- 3*3
-              >+> conv
-              >+> pool_avg -- 1*1
-              >+> lreshape (batch_size:.nb_labels:.Z)
-      criteria = mlrCost (batch_size:.nb_labels:.Z) >+> toScalar in
-   (id' *** model) >+> criteria
+  let criteria = mlrCost (batch_size:.nb_labels:.Z) >+> toScalar in
+   (id' *** model batch_size nb_labels) >+> criteria
   
 cost_grad :: Int -> Int -> HLSpace CFloat Weights
           -> (Tensor 4 CFloat, Tensor 2 CFloat)
@@ -97,6 +128,10 @@ cost_grad batch_size nb_labels w_t (batch,labels) = do
   (cost, bwd) <- cudaToTraining $ forwardBackward (nnet batch_size nb_labels) w_t (labels,batch)
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
+
+predict :: Int -> Int -> HLSpace CFloat Weights -> Tensor 4 CFloat -> Training (Tensor 2 CFloat)
+predict batch_size nb_labels w_t batch = do
+  cudaToTraining $ forward (model batch_size nb_labels) w_t batch
 
 he_init :: Dim 4 -> Training (Tensor 4 CFloat)
 he_init s@(_:.c:.fh:.fw:.Z) =
