@@ -169,7 +169,7 @@ instance (VectorSpace a) => VectorSpace [a] where
   x *^ [] = []
   x *^ (y:ys) = (x *^ y) : (x *^ ys)
 
-lsum :: (Monad m, AdditiveGroup a) => Layer m s '[] [a] a
+lsum :: (Monad m, AdditiveGroup a, Num a) => Layer m s '[] [a] a
 lsum = lfold $ Layer $ \_ mab -> case mab of
                                   Nothing -> return (zeroV, \x' -> (zeroV, Nothing))
                                   Just (a, acc) -> do
@@ -177,7 +177,8 @@ lsum = lfold $ Layer $ \_ mab -> case mab of
                                     return (res, \x' -> let (_,(a', acc')) = bwdres x'
                                                         in (zeroV, Just (a', acc')))
 
-lmean :: (Monad m, InnerSpace a, VectorSpace (Scalar a), Floating (Scalar a)) => Layer m (Scalar a) '[] [a] a
+lmean :: (Monad m, InnerSpace a, VectorSpace (Scalar a), Floating (Scalar a), Num a)
+      => Layer m (Scalar a) '[] [a] a
 lmean = Layer $ \_ as -> do
   let scaling = 1 / (fromIntegral $ length as)
   forwardBackward (lsum >+> scale -< scaling) zeroV as

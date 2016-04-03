@@ -7,6 +7,7 @@ module DeepBanana.Layer.CUDA.CuDNN (
   , CuDNN.convolution_fwd_algo_implicit_precomp_gemm
   , CuDNN.convolution_fwd_algo_gemm
   , CuDNN.convolution_fwd_algo_direct
+  , bias
   , activation
   , CuDNN.activation_sigmoid
   , CuDNN.activation_relu
@@ -69,6 +70,26 @@ convolution2d padding stride algo =
                   unsafeFreeze inputsgrad
           return $ broadcast' (shape out)
             >>> \upgrad -> (HLS $ bwdfilters upgrad `HCons` HNil, bwdinputs upgrad)
+
+bias :: (MonadCuda m, TensorScalar a)
+     => Layer m a '[Tensor 1 a] (Tensor 4 a) (Tensor 4 a)
+bias = combinePasses biasFwd biasBwd
+  where biasFwd (HLS (HCons bias_w HNil)) batch = embedCudaFromST $ do
+          let _:.c:._ = shape batch
+          bias_w' <- unsafeThaw bias_w >>= MT.reshape (1:.c:.1:.1:.Z)
+          batch' <- unsafeThaw batch
+          out <- biasForward cudnnHandle bias_w' batch'
+          unsafeFreeze out
+        biasBwd _ _ out =
+          return
+          $ broadcast' (shape out)
+          >>> \upgrad ->
+               let biasgrad = unsafeRunCudaError $ embedCudaErrorFromST $ do
+                     upgrad' <- unsafeThaw upgrad
+                     grad <- biasBackward cudnnHandle upgrad' >>= MT.reshape (c:.Z)
+                     unsafeFreeze grad
+                   _:.c:._ = shape out
+               in (HLS (HCons biasgrad HNil), upgrad)
 
 activation :: (MonadCuda m, TensorScalar a, Shape (Dim n))
            => CuDNN.ActivationMode
@@ -387,6 +408,43 @@ convolution2dBwdInputs handle (padh,padw) (strh,strw) fmaps filters upgrad = do
                 liftIO $ free beta
                 return $ unsafeCoerce inputsgrad
   embedExcept eres
+
+-- bias
+biasForward :: forall m a . (MonadCudaError m, PrimMonad m, TensorScalar a)
+            => CuDNN.Handle
+            -> MTensor (PrimState m) 4 a
+            -> MTensor (PrimState m) 4 a
+            -> m (MTensor (PrimState m) 4 a)
+biasForward handle bias batch = embedCudaError unsafeIOToPrim $ do
+  withTensor4d (unsafeCoerce bias :: IOTensor 4 a) $ \biasdesc biasptr -> do
+    out <- MT.copy (unsafeCoerce batch :: IOTensor 4 a)
+    withTensor4d out $ \outdesc outptr -> do
+      (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [1]
+      handleStatus (Proxy :: Proxy NotSupported)
+        $ handleStatus (Proxy :: Proxy BadParam)
+        $ handleStatus (Proxy :: Proxy ExecutionFailed)
+        $ liftIO
+        $ CuDNN.addTensor handle CuDNN.add_same_c alpha biasdesc biasptr
+        beta outdesc outptr
+      liftIO $ free alpha >> free beta
+    return $ unsafeCoerce out
+
+biasBackward :: forall m a . (MonadCudaError m, PrimMonad m, TensorScalar a)
+             => CuDNN.Handle
+             -> MTensor (PrimState m) 4 a
+             -> m (MTensor (PrimState m) 4 a)
+biasBackward handle upgrad = embedCudaError unsafeIOToPrim $ do
+  withTensor4d (unsafeCoerce upgrad :: IOTensor 4 a)$ \upgraddesc upgradptr -> do
+    let _:.c:._ = MT.shape upgrad
+    biasgrad <- emptyTensor $ 1:.c:.1:.1:.Z
+    withTensor4d biasgrad $ \biasgraddesc biasgradptr -> do
+      (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]
+      handleStatus (Proxy :: Proxy BadParam)
+        $ liftIO
+        $ CuDNN.convolutionBackwardBias handle alpha upgraddesc upgradptr
+        beta biasgraddesc biasgradptr
+      liftIO $ free alpha >> free beta
+      return $ unsafeCoerce biasgrad
 
 -- activations
 activationFwd :: forall t m a

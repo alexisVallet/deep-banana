@@ -42,8 +42,8 @@ multiply = combinePasses' fwdMul bwdMul
   where fwdMul (x1,x2) = return $ x1 * x2
         bwdMul (x1,x2) _ = return $ \upgrad -> (x2 * upgrad, x1 * upgrad)
 
-add :: (Monad m, AdditiveGroup t)
+add :: (Monad m, Num t)
     => Layer m (Scalar t) '[] (t, t) t
 add = combinePasses' fwdadd bwdadd
-  where fwdadd (x,y) = return $ x ^+^ y
+  where fwdadd (x,y) = return $ x + y
         bwdadd (x,y) _ = return $ \upgrad -> (upgrad, upgrad)

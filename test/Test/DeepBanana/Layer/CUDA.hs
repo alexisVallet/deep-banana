@@ -20,6 +20,7 @@ import Test.DeepBanana.Layer.NumericGrad
 test_cuda_layers :: Spec
 test_cuda_layers = do
   test_convolution
+  test_bias
   test_linear
   test_dropout
   test_sumRows
@@ -98,6 +99,27 @@ test_convolution = describe "DeepBanana.Layer.Cuda.convolution2d" $ do
           return $ HLS $ w' `HCons` HNil
     runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward conv w x y
     return ()
+
+test_bias :: Spec
+test_bias = describe "DeepBanana.Layer.CUDA.bias" $ do
+  it "has a correct forward pass" $ do
+    let x = tensorFromList' (1:.2:.2:.2:.Z)
+            $ [1,2,3,4,5,6,7,8] :: Tensor 4 CFloat
+        y = tensorFromList' (2:.Z) [1,2] :: Tensor 1 CFloat
+        expected = tensorFromList' (1:.2:.2:.2:.Z)
+                   $ [2,3,4,5,7,8,9,10] :: Tensor 4 CFloat
+        (actual,_) = runCudaEx (createGenerator rng_pseudo_default 42)  $ forward bias (HLS $ HCons y HNil) x
+    actual `shouldBe` expected
+  it "has a corect backward pass" $ do
+    let x = normal (1:.3:.4:.4:.Z) 0 0.1 :: CudaT IO (Tensor 4 CFloat)
+        y = normal (1:.3:.4:.4:.Z) 0 0.1 :: CudaT IO (Tensor 4 CFloat)
+        w = do
+          w' <- normal (3:.Z) 0 0.1 :: CudaT IO (Tensor 1 CFloat)
+          return $ HLS $ w' `HCons` HNil
+    runCudaTEx (createGenerator rng_pseudo_default 42)
+      $ check_backward bias w x y
+    return ()
+        
 
 splitEvery :: Int -> [a] -> [[a]]
 splitEvery n [] = []
