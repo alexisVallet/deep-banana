@@ -27,6 +27,7 @@ test_lstm = describe "DeepBanana.Layer.LSTM.lstm" $ do
               <*> initw (m:.m:.Z)
               <*> initw (m:.m:.Z)
               <*> initw (m:.Z)
-        return $ HLS $ hEnd w' :: CUDAT IO (HLSpace CFloat (LSTMWeights CFloat))
+        return $ HLS $ hEnd w' :: CudaT IO (HLSpace CFloat (LSTMWeights CFloat))
       input = pure (,) <*> normal (n:.m:.Z) 0 1 <*> normal (n:.m:.Z) 0 1
-    runCUDATEx 42 $ (check_backward lstm w input input :: CUDAT IO ())
+    runCudaTEx (createGenerator rng_pseudo_default 42) $ (check_backward lstm w input input :: CudaT IO ())
+    return ()

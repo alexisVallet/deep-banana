@@ -19,8 +19,8 @@ type LSTMWeights a = '[
   , Tensor 1 a
   ]
 
-lstm :: (Monad m, TensorScalar a)
-     => Layer (CUDAT m) a (LSTMWeights a) (Tensor 2 a, Tensor 2 a) (Tensor 2 a, Tensor 2 a)
+lstm :: (MonadCuda m, TensorScalar a)
+     => Layer m a (LSTMWeights a) (Tensor 2 a, Tensor 2 a) (Tensor 2 a, Tensor 2 a)
 lstm =
   let
     diag_linear = Layer $ \(HLS (HCons w HNil)) x -> do

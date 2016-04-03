@@ -18,6 +18,7 @@ import GHC.Stack
 import DeepBanana.Exception
 import DeepBanana.Layer
 import DeepBanana.Layer.CUDA
+import DeepBanana.Layer.CUDA.Monad
 import DeepBanana.Prelude
 import DeepBanana.Layer.Recurrent.Exception
 import DeepBanana.Tensor
@@ -186,8 +187,6 @@ lzip = combinePasses' fwdZip bwdZip
   where fwdZip (xs,ys) = return $ zip xs ys
         bwdZip _ _ = return unzip
 
-recMlrCost :: (Monad m, MonadError t m, Variant t IncompatibleShape,
-               Variant t IncompatibleSize, Variant t OutOfMemory, Exception t,
-               TensorScalar a)
+recMlrCost :: (MonadCuda m, TensorScalar a)
            => Dim 2 -> Layer m a '[] ([Tensor 2 a], [Tensor 2 a]) (Tensor 1 a)
 recMlrCost s = lzip >+> cmap (mlrCost s) >+> lmean

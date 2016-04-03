@@ -16,7 +16,7 @@ import Vision.Image.Storage.DevIL
 
 type Weights = '[Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat] 
 
-type Training = CUDAT IO
+type Training = CudaT IO
 
 main :: IO ()
 main = do
@@ -37,11 +37,11 @@ main = do
   emnist_val <- runExceptT $ P.toListM
                 $ load_mnist (Just test_images_url) (Just test_labels_url)
                 test_images_file test_labels_file
-  CUDA.set 2
+  let gen = createGenerator rng_pseudo_default 42
   case pure (,) <*> emnist_train <*> emnist_val of
    Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
    Right (mnist_train,mnist_val) -> do
-     merr <- runCUDAT 42 $ do
+     (merr,_) <- runCudaT gen $ do
        w_0 <- init_weights nb_labels
        let
          nb_val_batches = length mnist_val `div` batch_size
@@ -88,10 +88,10 @@ splitEvery n = L.unfoldr (\xs -> case splitAt n xs of
 argmax :: (Ord a) => [a] -> (Int, a)
 argmax = L.maximumBy (\(i1,x1) (i2,x2) -> compare x1 x2) . zip [0..]
 
-cudaToTraining :: CUDA a -> Training a
+cudaToTraining :: Cuda a -> Training a
 cudaToTraining = cudaHoist generalize
 
-model :: Int -> Int -> Layer CUDA CFloat Weights (Tensor 4 CFloat) (Tensor 2 CFloat)
+model :: Int -> Int -> Layer Cuda CFloat Weights (Tensor 4 CFloat) (Tensor 2 CFloat)
 model batch_size nb_labels =
   let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
              >+> activation activation_relu
@@ -108,7 +108,7 @@ model batch_size nb_labels =
   >+> lreshape (batch_size:.nb_labels:.Z)
 
 nnet :: Int -> Int
-     -> Layer CUDA CFloat Weights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
+     -> Layer Cuda CFloat Weights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
 nnet batch_size nb_labels =
   let criteria = mlrCost (batch_size:.nb_labels:.Z) >+> toScalar in
    (id' *** model batch_size nb_labels) >+> criteria

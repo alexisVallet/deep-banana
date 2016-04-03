@@ -1,53 +1,24 @@
 {-# LANGUAGE TypeFamilies #-}
 module DeepBanana.Layer.CUDA.CuRAND (
-    Generator
-  , CuRANDT(..)
-  , runCuRANDT
-  , uniform
-  , CULLong
+    uniform
   , normal
   , logNormal
   , dropout
   ) where
 
-
-import qualified Foreign.CUDA.CuRAND as CuRAND
 import Foreign.Marshal
+import qualified Foreign.CUDA.CuRAND as CuRAND
 import System.IO.Unsafe
 
 import DeepBanana.Exception
 import DeepBanana.Layer
+import DeepBanana.Layer.CUDA.Monad
 import DeepBanana.Prelude
 import DeepBanana.Tensor
 import DeepBanana.Tensor.Exception
 import qualified DeepBanana.Tensor.Mutable as MT
 
-newtype Generator = G CuRAND.Generator
-
-type CuRANDT = StateT Generator
-
-runCuRANDT :: (Monad m) => CULLong -> CuRANDT m a -> m a
-runCuRANDT seed action =
-  evalStateT action $ createGenerator CuRAND.rng_pseudo_default seed
-
--- The trick to make CuRAND work in pure code is that all the code that updates
--- the internal PRNG state works with this.
-unsafeCuRandWrap :: (MonadState Generator m) => (CuRAND.Generator -> IO a) -> m a
-unsafeCuRandWrap f = do
-  G g <- get
-  let res = unsafePerformIO $ f g
-  put $ G g
-  return res
-
-createGenerator :: CuRAND.RngType -> CULLong -> Generator
-createGenerator rngType seed = unsafePerformIO $ do
-  g <- alloca $ \genptr -> do
-    CuRAND.createGenerator genptr rngType
-    peek genptr
-  CuRAND.setPseudoRandomGeneratorSeed g seed
-  return $ G g
-
-uniform :: (MonadState Generator m, MonadError t m, Variant t OutOfMemory,
+uniform :: (MonadCuda m,
             TensorScalar a, Shape (Dim n))
         => Dim n -> m (Tensor n a)
 uniform shp = do
@@ -58,8 +29,7 @@ uniform shp = do
     unsafeFreeze res
   embedExcept eres
 
-normal :: (MonadState Generator m, MonadError t m, Variant t OutOfMemory,
-           TensorScalar a, Shape (Dim n))
+normal :: (MonadCuda m, TensorScalar a, Shape (Dim n))
        =>  Dim n -> a -> a -> m (Tensor n a)
 normal shp mean std = do
   eres <- unsafeCuRandWrap $ \gen -> runExceptT $ do
@@ -69,8 +39,7 @@ normal shp mean std = do
     unsafeFreeze res
   embedExcept eres
 
-logNormal :: (MonadState Generator m, MonadError t m, Variant t OutOfMemory,
-              TensorScalar a, Shape (Dim n))
+logNormal :: (MonadCuda m, TensorScalar a, Shape (Dim n))
           => Dim n -> a -> a -> m (Tensor n a)
 logNormal shp mean std = do
   eres <- unsafeCuRandWrap $ \gen -> runExceptT $ do
@@ -81,9 +50,7 @@ logNormal shp mean std = do
   embedExcept eres
 
 -- dropout
-dropout :: forall m t a n
-        . (MonadState Generator m, MonadError t m, Variant t OutOfMemory,
-           TensorScalar a, Shape (Dim n))
+dropout :: (MonadCuda m, TensorScalar a, Shape (Dim n))
         => a
         -> Layer m a '[] (Tensor n a) (Tensor n a)
 dropout drop_proba = noWeights fwdbwd

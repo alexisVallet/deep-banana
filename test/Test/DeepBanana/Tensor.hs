@@ -18,6 +18,6 @@ test_broadcast = describe "DeepBanana.Tensor.broadcast" $ do
                                        1,2,3,
                                        1,2,3] :: Tensor 2 CFloat
         actual = unsafeRunExcept (
-          broadcast (shape expected) x :: Either CUDAExceptions (Tensor 2 CFloat)
+          broadcast (shape expected) x :: Either CudaExceptions (Tensor 2 CFloat)
           )
     actual `shouldBe` expected

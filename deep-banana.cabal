@@ -23,6 +23,7 @@ library
                      , DeepBanana.Layer.CUDA.Cublas
                      , DeepBanana.Layer.CUDA.CuRAND
                      , DeepBanana.Layer.CUDA.Numeric
+                     , DeepBanana.Layer.CUDA.Monad
                      , DeepBanana.Layer.Recurrent
                      , DeepBanana.Layer.Recurrent.Exception
                      , DeepBanana.Layer.LSTM
@@ -61,6 +62,7 @@ library
                      , HList >= 0.4
                      , reflection >= 2.1
                      , classy-prelude >= 0.12
+                     , lens >= 4.13
   default-language:    Haskell2010
   default-extensions:  ScopedTypeVariables
                      , DataKinds

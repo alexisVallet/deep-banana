@@ -3,13 +3,17 @@ module DeepBanana.Prelude (
   , module Control.Category
   , module Control.DeepSeq
   , module Control.Exception
+  , module Control.Monad.Cont
   , module Control.Monad.Except
+  , module Control.Monad.List
   , module Control.Monad.Reader
   , module Control.Monad.RWS
   , module Control.Monad.State
   , module Control.Monad.Morph
   , module Control.Monad.ST
   , module Control.Monad.Trans.Identity
+  , module Control.Monad.Trans.Maybe
+  , module Control.Monad.Writer
   , module Data.HList.HList
   , module Data.Proxy
   , module Data.Ratio
@@ -26,6 +30,18 @@ import ClassyPrelude hiding ((<.>), first, second, (***), (&&&))
 import Control.Category
 import Control.DeepSeq
 import Control.Exception (throw)
+import Control.Monad.Cont (
+    MonadCont(..)
+  , Cont(..)
+  , cont
+  , runCont
+  , mapCont
+  , withCont
+  , ContT(..)
+  , runContT
+  , mapContT
+  , withContT
+  )
 import Control.Monad.Except (
     MonadError(..)
   , ExceptT(..)
@@ -36,6 +52,10 @@ import Control.Monad.Except (
   , runExcept
   , mapExcept
   , withExcept
+  )
+import Control.Monad.List (
+    ListT(..)
+  , mapListT
   )
 import Control.Monad.Morph
 import Control.Monad.Reader (
@@ -87,6 +107,25 @@ import Control.Monad.Trans.Identity (
     IdentityT(..)
   , mapIdentityT
   )
+import Control.Monad.Trans.Maybe (
+    MaybeT(..)
+  , mapMaybeT
+  , maybeToExceptT
+  , exceptToMaybeT
+  )
+import Control.Monad.Writer (
+    MonadWriter(..)
+  , listens
+  , censor
+  , Writer(..)
+  , WriterT(..)
+  , runWriter
+  , execWriter
+  , mapWriter
+  , runWriterT
+  , execWriterT
+  , mapWriterT
+  )
 import Control.Monad.ST
 import Data.HList.HList
 import Data.Proxy
@@ -96,5 +135,5 @@ import Foreign hiding (void)
 import Foreign.C
 import GHC.Generics (Generic(..))
 import GHC.TypeLits
-import Pipes hiding (Proxy, for)
+import Pipes hiding (Proxy, for, ListT, runListT, Enumerable)
 import System.Directory

@@ -1,5 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE RankNTypes #-}
 module DeepBanana.Layer.CUDA.CuDNN (
     convolution2d
   , CuDNN.convolution_fwd_algo_implicit_gemm
@@ -30,6 +31,7 @@ import System.IO.Unsafe
 import DeepBanana.Exception
 import DeepBanana.Layer
 import DeepBanana.Layer.CUDA.Exception
+import DeepBanana.Layer.CUDA.Monad
 import DeepBanana.Layer.CUDA.CuDNN.Exception
 import DeepBanana.Prelude
 import DeepBanana.Tensor
@@ -37,11 +39,7 @@ import DeepBanana.Tensor.Exception
 import qualified DeepBanana.Tensor.Mutable as MT
 import DeepBanana.Tensor.Mutable (MTensor, IOTensor, withDevicePtr, emptyTensor)
 
-convolution2d :: forall m t a
-              . (Monad m, MonadError t m, Variant t AllocFailed, Variant t BadParam,
-                 Variant t NotSupported, Variant t MemoryAllocation,
-                 Variant t MappingError, Variant t ExecutionFailed,
-                 Variant t OutOfMemory, Exception t, TensorScalar a)
+convolution2d :: forall m a . (MonadCuda m, TensorScalar a)
               => (Int,Int)
               -> (Int,Int)
               -> CuDNN.ConvolutionFwdAlgo
@@ -49,21 +47,21 @@ convolution2d :: forall m t a
 convolution2d padding stride algo =
   combinePasses convfwd convbwd
   where convfwd (HLS (HCons filters HNil)) fmaps = do
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             filters' <- unsafeThaw filters
             fmaps' <- unsafeThaw fmaps
             convres <- convolution2dFwd cudnnHandle padding stride algo fmaps' filters'
             unsafeFreeze convres
         convbwd (HLS (HCons filters HNil)) fmaps out = do
           let bwdfilters upgrad =
-                unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+                unsafeRunCudaError $ embedCudaErrorFromST $ do
                   filters' <- unsafeThaw filters
                   fmaps' <- unsafeThaw fmaps
                   upgrad' <- unsafeThaw upgrad
                   filtersgrad <- convolution2dBwdFilters cudnnHandle padding stride fmaps' filters' upgrad'
                   unsafeFreeze filtersgrad
               bwdinputs upgrad =
-                unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+                unsafeRunCudaError $ embedCudaErrorFromST $ do
                   filters' <- unsafeThaw filters
                   fmaps' <- unsafeThaw fmaps
                   upgrad' <- unsafeThaw upgrad
@@ -72,23 +70,20 @@ convolution2d padding stride algo =
           return $ broadcast' (shape out)
             >>> \upgrad -> (HLS $ bwdfilters upgrad `HCons` HNil, bwdinputs upgrad)
 
-activation :: forall t m n a
-           . (Monad m, MonadError t m, Variant t BadParam, Variant t ExecutionFailed,
-              Variant t AllocFailed, Variant t NotSupported, Variant t OutOfMemory,
-              TensorScalar a, Exception t, Shape (Dim n))
+activation :: (MonadCuda m, TensorScalar a, Shape (Dim n))
            => CuDNN.ActivationMode
            -> Layer m a '[] (Tensor n a) (Tensor n a)
 activation mode =
   combinePasses' actfwd actbwd
   where to4 t = reshape' (size (shape t):.1:.1:.1:.Z) t
         actfwd fmaps = do
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             fmaps' <- unsafeThaw $ to4 fmaps
             activations <- activationFwd cudnnHandle mode fmaps'
             fmap (reshape' (shape fmaps)) $ unsafeFreeze activations
         actbwd inp out = do
           return $ broadcast' (shape out) >>>
-            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+            \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               inp' <- unsafeThaw $ to4 inp
               out' <- unsafeThaw $ to4 out
               upgrad' <- unsafeThaw $ to4 upgrad
@@ -96,10 +91,7 @@ activation mode =
               fmap (reshape' (shape inp)) $ unsafeFreeze grad
 
 -- pooling
-pooling2d :: forall m t a
-           . (Monad m, MonadError t m, Variant t AllocFailed, Variant t BadParam,
-              Variant t NotSupported, Variant t ExecutionFailed, Variant t OutOfMemory,
-              Exception t, TensorScalar a)
+pooling2d :: (MonadCuda m, TensorScalar a)
           => (Int,Int)
           -> (Int,Int)
           -> (Int,Int)
@@ -108,51 +100,45 @@ pooling2d :: forall m t a
 pooling2d psize padding stride mode =
   combinePasses' poolfwd poolbwd
   where poolfwd fmaps = do
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             fmaps' <- unsafeThaw fmaps
             poolres <- pooling2dFwd cudnnHandle psize padding stride mode fmaps'
             unsafeFreeze poolres
         poolbwd inp out = do
           return $ broadcast' (shape out) >>> \
-            upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+            upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               inp' <- unsafeThaw inp
               out' <- unsafeThaw out
               upgrad' <- unsafeThaw upgrad
               grad <- pooling2dBwd cudnnHandle psize padding stride mode inp' out' upgrad'
               unsafeFreeze grad
 
-nchw_to_nhwc :: forall m t a
-              . (Monad m, MonadError t m, Variant t BadParam, Variant t ExecutionFailed,
-                 Variant t AllocFailed, Variant t NotSupported, Variant t OutOfMemory,
-                 Exception t, TensorScalar a)
+nchw_to_nhwc :: (MonadCuda m, TensorScalar a)
              => Layer m a '[] (Tensor 4 a) (Tensor 4 a)
 nchw_to_nhwc = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             mt <- unsafeThaw t
             mt' <- nchw_to_nhwc' cudnnHandle mt
             unsafeFreeze mt'
         bwdTrans _ out = do
           return $ broadcast' (shape out) >>>
-            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+            \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               mu <- unsafeThaw upgrad
               mu' <- nhwc_to_nchw' cudnnHandle mu
               unsafeFreeze mu'
 
-nhwc_to_nchw :: forall m t a
-              . (Monad m, MonadError t m, Variant t BadParam, Variant t ExecutionFailed,
-                 Variant t AllocFailed, Variant t NotSupported, Variant t OutOfMemory,
-                 Exception t, TensorScalar a)
+nhwc_to_nchw :: (MonadCuda m, TensorScalar a)
              => Layer m a '[] (Tensor 4 a) (Tensor 4 a)
 nhwc_to_nchw = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             mt <- unsafeThaw t
             mt' <- nhwc_to_nchw' cudnnHandle mt
             unsafeFreeze mt'
         bwdTrans _ out = do
           return $ broadcast' (shape out) >>>
-            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+            \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               mu <- unsafeThaw upgrad
               mu' <- nchw_to_nhwc' cudnnHandle mu
               unsafeFreeze mu'
@@ -271,9 +257,6 @@ convOutShape (n1:.c1:.h1:.w1:.Z) (n2:.c2:.h2:.w2:.Z) (padh,padw) (strh,strw) =
   n1:.n2:.convOutDim h1 h2 padh strh:.convOutDim w1 w2 padw strw:.Z
   where convOutDim input_dim filter_dim padding stride =
           1 + (input_dim + (2 * padding) - filter_dim) `div` stride
-
-unsafeIOToPrim :: (PrimMonad m) => IO a -> m a
-unsafeIOToPrim = unsafePrimToPrim
 
 -- convolution
 convolution2dFwd :: forall t m a

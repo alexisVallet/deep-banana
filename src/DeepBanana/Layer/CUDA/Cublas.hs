@@ -17,6 +17,7 @@ import Unsafe.Coerce
 
 import DeepBanana.Exception
 import DeepBanana.Layer
+import DeepBanana.Layer.CUDA.Monad
 import DeepBanana.Prelude
 import DeepBanana.Tensor
 import DeepBanana.Tensor.Exception
@@ -24,9 +25,7 @@ import DeepBanana.Tensor.Mutable (MTensor, IOTensor)
 import qualified DeepBanana.Tensor.Mutable as MT
 
 -- linear layer
-dot :: forall m t a
-     . (MonadError t m, Variant t IncompatibleShape, Variant t OutOfMemory,
-        Exception t, TensorScalar a)
+dot :: (MonadCuda m, TensorScalar a)
     => Layer m a '[] (Tensor 2 a,Tensor 2 a) (Tensor 2 a)
 dot = combinePasses' fwddot bwddot
   where fwddot (x,w) = do
@@ -34,14 +33,14 @@ dot = combinePasses' fwddot bwddot
               m' :. k :. Z = shape w
           when (m /= m') $ throwVariant $ incompatibleShape $
             "Incompatible shapes " ++ show (shape x) ++ " and " ++ show (shape w) ++ " for dot product."
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             mw <- unsafeThaw w
             mx <- unsafeThaw x
             out <- MT.emptyTensor $ n :. k :. Z
             gemmFwd cublasHandle Cublas.N Cublas.N 1 mx mw 0 out
             unsafeFreeze out
         bwddot (x,w) out = do
-          return $ broadcast' (shape out) >>> \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+          return $ broadcast' (shape out) >>> \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
             mw <- unsafeThaw w
             mx <- unsafeThaw x
             mupgrad <- unsafeThaw upgrad
@@ -53,8 +52,7 @@ dot = combinePasses' fwddot bwddot
             w' <- unsafeFreeze mw'
             return (x', w')
 
-linear :: (MonadError t m, Variant t IncompatibleShape, Variant t OutOfMemory,
-           Exception t, TensorScalar a)
+linear :: (MonadCuda m, TensorScalar a)
        => Layer m a '[Tensor 2 a] (Tensor 2 a) (Tensor 2 a)
 linear = Layer $ \(HLS (HCons w HNil)) x -> do
   (y, bwd) <- forwardBackward dot (HLS HNil) (x,w)
@@ -62,12 +60,10 @@ linear = Layer $ \(HLS (HCons w HNil)) x -> do
                                                   in (HLS $ HCons w' HNil, x'))
 
 -- matrix sum reductions
-sumCols :: forall m t a
-         . (MonadError t m, Variant t OutOfMemory, Variant t IncompatibleShape,
-            Exception t, TensorScalar a)
+sumCols :: (MonadCuda m, TensorScalar a)
         => Layer m a '[] (Tensor 2 a) (Tensor 1 a)
 sumCols = combinePasses' fwdsumcols bwdsumcols
-  where fwdsumcols x = embedExcept $ runST $ runExceptT $ do
+  where fwdsumcols x = embedCudaFromST $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ 1 :. m :. Z
@@ -77,7 +73,7 @@ sumCols = combinePasses' fwdsumcols bwdsumcols
             return $ reshape' (m:.Z) fout
         bwdsumcols x out = do
           return $ broadcast' (shape out) >>>
-            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+            \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               let n :. m :. Z = shape x
               ones <- MT.ones $ 1 :. n :. Z
               out <- MT.emptyTensor $ shape x
@@ -85,13 +81,11 @@ sumCols = combinePasses' fwdsumcols bwdsumcols
               gemmBwdB cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
               unsafeFreeze out
 
-sumRows :: forall m t a
-         . (MonadError t m, Variant t OutOfMemory, Variant t IncompatibleShape,
-            Exception t, TensorScalar a)
+sumRows :: (MonadCuda m, TensorScalar a)
         => Layer m a '[] (Tensor 2 a) (Tensor 1 a)
 sumRows = combinePasses' fwdsumrows bwdsumrows
   where fwdsumrows x = do
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             let n :. m :. Z = shape x
             ones <- MT.ones $ m :. 1 :. Z
             out <- MT.emptyTensor $ n :. 1 :. Z
@@ -100,7 +94,7 @@ sumRows = combinePasses' fwdsumrows bwdsumrows
             fmap (reshape' $ n :. Z) $ unsafeFreeze out
         bwdsumrows x out = do
           return $ broadcast' (shape out) >>>
-            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+            \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               let n :. m :. Z = shape x
               ones <- MT.ones $ m :. 1 :. Z
               out <- MT.emptyTensor $ shape x
@@ -108,14 +102,12 @@ sumRows = combinePasses' fwdsumrows bwdsumrows
               gemmBwdA cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
               unsafeFreeze out
 
-replicateAsRows :: forall m t a
-                . (Monad m, MonadError t m, Variant t IncompatibleShape,
-                   Variant t OutOfMemory, Exception t, TensorScalar a)
+replicateAsRows :: (MonadCuda m, TensorScalar a)
                 => Int
                 -> Layer m a '[] (Tensor 1 a) (Tensor 2 a)
 replicateAsRows n = combinePasses' fwdRepRows bwdRepRows
   where fwdRepRows x = do
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             let m :. Z = shape x
             ones <- MT.ones $ n :. 1 :. Z
             out <- MT.emptyTensor $ n :. m :. Z
@@ -124,7 +116,7 @@ replicateAsRows n = combinePasses' fwdRepRows bwdRepRows
             unsafeFreeze out
         bwdRepRows x out = do
           return $ broadcast' (shape out) >>>
-            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+            \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               let m :. Z = shape x
               ones <- MT.ones $ n :. 1 :. Z
               out <- MT.emptyTensor $ 1 :. m :. Z
@@ -132,14 +124,12 @@ replicateAsRows n = combinePasses' fwdRepRows bwdRepRows
               gemmBwdB cublasHandle Cublas.N Cublas.N 1 ones mupgrad out
               unsafeFreeze $ MT.reshape' (m :. Z) out
 
-replicateAsCols :: forall m t a
-                . (Monad m, MonadError t m, Variant t IncompatibleShape, Exception t,
-                   Variant t OutOfMemory, TensorScalar a)
+replicateAsCols :: (MonadCuda m, TensorScalar a)
                 => Int
                 -> Layer m a '[] (Tensor 1 a) (Tensor 2 a)
 replicateAsCols n = combinePasses' fwdRepCols bwdRepCols
   where fwdRepCols x = do
-          embedExcept $ runST $ runExceptT $ do
+          embedCudaFromST $ do
             let m :. Z = shape x
             ones <- MT.ones $ 1 :. n :. Z
             out <- MT.emptyTensor $ m :. n :. Z
@@ -148,7 +138,7 @@ replicateAsCols n = combinePasses' fwdRepCols bwdRepCols
             unsafeFreeze out
         bwdRepCols x out = do
           return $ broadcast' (shape out) >>>
-            \upgrad -> unsafeRunExcept $ runST $ runExceptTAs (Proxy :: Proxy t) $ do
+            \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               let m :. Z = shape x
               ones <- MT.ones $ 1 :. n :. Z
               out <- MT.emptyTensor $ m :. 1 :. Z

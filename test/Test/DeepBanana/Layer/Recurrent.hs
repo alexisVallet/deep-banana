@@ -22,7 +22,7 @@ test_recurrent_layers = do
   test_lunfold_and_recMlrCost
 
 
-xavier :: (Monad m, TensorScalar a) => Dim 2 -> CUDAT m (Tensor 2 a)
+xavier :: (Monad m, TensorScalar a) => Dim 2 -> CudaT m (Tensor 2 a)
 xavier s@(nb_input:.nb_output:.Z) = do
   x <- uniform s
   return $ (sqrt 6 / sqrt (fromIntegral $ nb_input + nb_output)) * (x - 0.5)
@@ -47,9 +47,10 @@ test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
                 <*> xavier (nb_features:.nb_output:.Z)
                 <*> xavier (nb_features:.nb_features:.Z)
           return $ HLS $ hEnd w'
-        h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01 :: CUDAT IO (Tensor 2 CFloat)
+        h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01 :: CudaT IO (Tensor 2 CFloat)
         upgrad = replicateM out_length $ normal (nb_samples:.nb_output:.Z) 0 0.01
-    runCUDATEx 42 $ check_backward recnet w h_0 upgrad
+    runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward recnet w h_0 upgrad
+    return ()
 
 test_recMlrCost :: Spec
 test_recMlrCost = describe "DeepBanana.Layer.Recurrent.recMlrCost" $ do
@@ -60,7 +61,8 @@ test_recMlrCost = describe "DeepBanana.Layer.Recurrent.recMlrCost" $ do
         out_seq = replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
         labels = replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
         cost = recMlrCost (nb_samples:.nb_output:.Z) >+> toScalar
-    runCUDATEx 42 $ check_backward cost (return zeroV) (pure (,) <*> labels <*> out_seq) (return 1 :: CUDAT IO CFloat)
+    runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward cost (return zeroV) (pure (,) <*> labels <*> out_seq) (return 1 :: CudaT IO CFloat)
+    return ()
 
 test_lunfold_and_recMlrCost :: Spec
 test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> recMlrCost" $ do
@@ -88,4 +90,5 @@ test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> 
           x <- uniform (nb_samples:.nb_features:.Z)
           labels <- replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
           return (labels,x)
-    runCUDATEx 42 $ check_backward fullNet w input (return 1 :: CUDAT IO CFloat)
+    runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward fullNet w input (return 1 :: CudaT IO CFloat)
+    return ()
