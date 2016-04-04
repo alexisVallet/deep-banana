@@ -38,6 +38,8 @@ library
                      , DeepBanana.Data.Exception
                      , DeepBanana.Cubits
                      , DeepBanana.Exception
+                     , DeepBanana.HList
+                     , DeepBanana.Weights
   build-depends:       base >= 4.7
                      , cuda >= 0.7
                      , hcudnn >= 0.1
@@ -59,8 +61,6 @@ library
                      , bytestring >= 0.10
                      , deepseq >= 1.3
                      , time >= 1.4
-                     , HList >= 0.4
-                     , reflection >= 2.1
                      , classy-prelude >= 0.12
                      , lens >= 4.13
   default-language:    Haskell2010

@@ -17,7 +17,7 @@ test_add = describe "DeepBanana.Layer.CUDA.Numeric.add" $ do
     let x = normal (1:.3:.4:.4:.Z) 0 0.1 :: CudaT IO (Tensor 4 CFloat)
         y = normal (1:.3:.4:.4:.Z) 0 0.1 :: CudaT IO (Tensor 4 CFloat)
         res = normal (1:.3:.4:.4:.Z) 0 0.1 :: CudaT IO (Tensor 4 CFloat)
-        w = return $ HLS HNil
+        w = return $ W Z
     runCudaTEx (createGenerator rng_pseudo_default 42)
       $ check_backward add w (pure (,) <*> x <*> y) res
     return ()

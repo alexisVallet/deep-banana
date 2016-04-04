@@ -14,7 +14,6 @@ module DeepBanana.Prelude (
   , module Control.Monad.Trans.Identity
   , module Control.Monad.Trans.Maybe
   , module Control.Monad.Writer
-  , module Data.HList.HList
   , module Data.Proxy
   , module Data.Ratio
   , module Data.VectorSpace
@@ -127,7 +126,6 @@ import Control.Monad.Writer (
   , mapWriterT
   )
 import Control.Monad.ST
-import Data.HList.HList
 import Data.Proxy
 import Data.Ratio
 import Data.VectorSpace

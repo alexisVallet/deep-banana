@@ -6,7 +6,6 @@ import Prelude hiding (id, (.))
 import Control.Category
 import Control.Monad
 import Test.Hspec
-import Data.HList.HList
 import Data.VectorSpace
 
 import DeepBanana
@@ -43,10 +42,11 @@ test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
         recnet =
           lunfold' out_length (h_to_out &&& h_to_h)
         w = do
-          w' <- pure hBuild
-                <*> xavier (nb_features:.nb_output:.Z)
-                <*> xavier (nb_features:.nb_features:.Z)
-          return $ HLS $ hEnd w'
+          w' <- do
+            w_1 <- xavier (nb_features:.nb_output:.Z)
+            w_2 <- xavier (nb_features:.nb_features:.Z)
+            return $ w_1:.w_2:.Z
+          return $ W w'
         h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01 :: CudaT IO (Tensor 2 CFloat)
         upgrad = replicateM out_length $ normal (nb_samples:.nb_output:.Z) 0 0.01
     runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward recnet w h_0 upgrad
@@ -82,10 +82,11 @@ test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> 
         cost = recMlrCost (nb_samples:.nb_output:.Z) >+> toScalar
         fullNet = (id' *** recnet) >+> cost
         w = do
-          w' <- pure hBuild
-                <*> xavier (nb_features:.nb_output:.Z)
-                <*> xavier (nb_features:.nb_features:.Z)
-          return $ HLS $ hEnd w'
+          w' <- do
+            w_1 <- xavier (nb_features:.nb_output:.Z)
+            w_2 <- xavier (nb_features:.nb_features:.Z)
+            return $ w_1:.w_2:.Z
+          return $ W w'
         input = do
           x <- uniform (nb_samples:.nb_features:.Z)
           labels <- replicateM out_length $ uniform (nb_samples:.nb_output:.Z)

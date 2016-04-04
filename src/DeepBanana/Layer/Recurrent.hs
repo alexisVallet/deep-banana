@@ -56,7 +56,7 @@ incompatibleBackwardPass :: (?loc :: CallStack) => [a] -> [a] -> IncompatibleLen
 incompatibleBackwardPass out upgrad =
   incompatibleLength $ "Incompatible length for the list backward pass input. It should have the same length as the forward pass output.\nForward pass output length: " ++ show (length out) ++ "\nBackward pass input length: " ++ show (length upgrad)
 
-instance (Monad m, AdditiveGroup (HLSpace s w))
+instance (Monad m, AdditiveGroup (Weights s w))
          => CFunctor (Layer m s w) (Base [c]) where
   cmap l = Layer $ \w bca -> case bca of
     Nil -> return (Nil, \xs -> case xs of
@@ -73,7 +73,7 @@ instance (Monad m, AdditiveGroup (HLSpace s w))
                                          $ incompatibleLength
                                          $ "CFunctor (Base [c]): incompatible backward pass, expected Cons, got Nil.")
 
-instance (Monad m, AdditiveGroup (HLSpace s w)) => CFunctor (Layer m s w) [] where
+instance (Monad m, AdditiveGroup (Weights s w)) => CFunctor (Layer m s w) [] where
   cmap l = Layer $ \w as -> case as of
     [] -> return ([], \xs -> case xs of
                               [] -> (zeroV, [])
@@ -87,7 +87,7 @@ instance (Monad m, AdditiveGroup (HLSpace s w)) => CFunctor (Layer m s w) [] whe
                                                 (w1' ^+^ w2', x':xs')
                                     _ -> throw $ incompatibleBackwardPass (y:ys) upgrad)
 
-instance (Monad m, AdditiveGroup (HLSpace s w))
+instance (Monad m, AdditiveGroup (Weights s w))
          => CFoldable (Layer m s w) [a] where
   cproject = Layer $ \w as -> case as of
     [] -> return (Nil, \xs -> case xs of
@@ -99,7 +99,7 @@ instance (Monad m, AdditiveGroup (HLSpace s w))
                                           _ -> throw $ incompatibleLength
                                                $ "CFoldable (Layer m s w) [a]: incompatible backward pass, expected Cons, got Nil.")
 
-instance (Monad m, AdditiveGroup (HLSpace s w))
+instance (Monad m, AdditiveGroup (Weights s w))
          => CUnfoldable (Layer m s w) [a] where
   cembed = Layer $ \w as -> case as of
     Nil -> return ([], \xs -> case xs of
@@ -109,27 +109,27 @@ instance (Monad m, AdditiveGroup (HLSpace s w))
                              (a':as') -> (zeroV, Cons a' as')
                              _ -> throw $ incompatibleBackwardPass (a:as) xs)
 
-baseToMaybePair :: (Monad m, AdditiveGroup (HLSpace s w))
+baseToMaybePair :: (Monad m, AdditiveGroup (Weights s w))
                 => Layer m s w (Base [a] b) (Maybe (a, b))
 baseToMaybePair = Layer $ \w bab -> case bab of
   Nil -> return (Nothing, \Nothing -> (zeroV, Nil))
   ~(Cons a b) -> return (Just (a, b), \(Just (a', b')) -> (zeroV, Cons a' b'))
 
-maybePairToBase :: (Monad m, AdditiveGroup (HLSpace s w))
+maybePairToBase :: (Monad m, AdditiveGroup (Weights s w))
                 => Layer m s w (Maybe (a, b)) (Base [a] b)
 maybePairToBase = Layer $ \w mab -> case mab of
   Nothing -> return (Nil, \Nil -> (zeroV, Nothing))
   ~(Just (a, b)) -> return (Cons a b, \(Cons a' b') -> (zeroV, Just (a', b')))
 
-lfold :: (Monad m, AdditiveGroup (HLSpace s w))
+lfold :: (Monad m, AdditiveGroup (Weights s w))
       => Layer m s w (Maybe (a, b)) b -> Layer m s w [a] b
 lfold l = cata (baseToMaybePair >>> l)
 
-lunfold :: (Monad m, AdditiveGroup (HLSpace s w))
+lunfold :: (Monad m, AdditiveGroup (Weights s w))
         => Layer m s w b (Maybe (a, b)) -> Layer m s w b [a]
 lunfold l = ana (l >>> maybePairToBase)
 
-ltake :: (Monad m, AdditiveGroup (HLSpace s w), AdditiveGroup b)
+ltake :: (Monad m, AdditiveGroup (Weights s w), AdditiveGroup b)
       => Layer m s w b (a, b) -> Layer (StateT Int m) s w b (Maybe (a, b))
 ltake l = Layer $ \w b1 -> do
   i <- get
@@ -145,7 +145,7 @@ levalStateT :: (Monad m) => st -> Layer (StateT st m) s w a b -> Layer m s w a b
 levalStateT st l = Layer $ \w a -> flip evalStateT st $ forwardBackward l w a
 
 
-lunfold' :: (Monad m, AdditiveGroup (HLSpace s w), AdditiveGroup b)
+lunfold' :: (Monad m, AdditiveGroup (Weights s w), AdditiveGroup b)
          => Int -> Layer m s w b (a, b) -> Layer m s w b [a]
 lunfold' n l = levalStateT n (lunfold (ltake l))
 

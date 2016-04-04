@@ -65,17 +65,17 @@ instance (MonadError t m, Variant t OutOfMemory, Variant t IncompatibleShape,
     ones <- ones (shape t)
     elementwiseMax t $ x *^ ones
 
-instance (Monad m) => HasElemwiseMax m (HLSpace s '[]) where
-  elemwiseMax _ _ = return $ HLS HNil
+instance (Monad m) => HasElemwiseMax m (Weights s '[]) where
+  elemwiseMax _ _ = return $ W Z
 
 instance forall m s l e
-         . (HasElemwiseMax m (HLSpace s l), HasElemwiseMax m e,
-            Scalar e ~ s, Scalar (HLSpace s l) ~ s)
-         => HasElemwiseMax m (HLSpace s (e ': l)) where
-  elemwiseMax (HLS (HCons x xs)) y = do
+         . (HasElemwiseMax m (Weights s l), HasElemwiseMax m e,
+            Scalar e ~ s, Scalar (Weights s l) ~ s)
+         => HasElemwiseMax m (Weights s (e ': l)) where
+  elemwiseMax (W ((:.) x xs)) y = do
     head <- elemwiseMax x y
-    tail <- elemwiseMax (HLS xs) y :: m (HLSpace s l)
-    return $ HLS $ HCons head $ unHLS tail
+    tail <- elemwiseMax (W xs) y :: m (Weights s l)
+    return $ W $ (:.) head $ unWeights tail
 
 rmsprop :: (HasElemwiseMax m w, Floating w, Floating (Scalar w))
         => Scalar w -> Scalar w -> Scalar w -> Update (StateT (Maybe w)) m w

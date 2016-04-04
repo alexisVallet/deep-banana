@@ -19,11 +19,11 @@ allClose t1 t2 =
   $ zip (tensorToList t1) (tensorToList t2)
 
 check_backward :: (MonadIO m, TensorScalar a, Ord a, Show a,
-                   Show inp, Show (HLSpace a w), Show out, ToTensor inp,
-                   ToTensor (HLSpace a w), ToTensor out, Scalar out ~ a,
-                   Scalar (HLSpace a w) ~ a, Scalar inp ~ a)
+                   Show inp, Show (Weights a w), Show out, ToTensor inp,
+                   ToTensor (Weights a w), ToTensor out, Scalar out ~ a,
+                   Scalar (Weights a w) ~ a, Scalar inp ~ a)
                => Layer m a w inp out
-               -> m (HLSpace a w)
+               -> m (Weights a w)
                -> m inp
                -> m out
                -> m ()
@@ -81,8 +81,8 @@ genericNumericBwd f inp upgrad = do
 data ShapeInfo t a where
   TensorShape :: (Shape (Dim n)) => Dim n -> ShapeInfo (Tensor n a) a
   ScalarShape :: ShapeInfo a a
-  EmptyShape :: ShapeInfo (HLSpace a '[]) a
-  HListShape :: ShapeInfo t1 a -> ShapeInfo (HLSpace a l) a -> ShapeInfo (HLSpace a (t1 ': l)) a
+  EmptyShape :: ShapeInfo (Weights a '[]) a
+  HListShape :: ShapeInfo t1 a -> ShapeInfo (Weights a l) a -> ShapeInfo (Weights a (t1 ': l)) a
   PairShape :: ShapeInfo t1 a -> ShapeInfo t2 a -> ShapeInfo (t1,t2) a
   ListShape :: [ShapeInfo t a] -> ShapeInfo [t] a
 
@@ -110,21 +110,21 @@ instance ToTensor CDouble where
   toTensor x = (tensorFromList' (1:.Z) [x], ScalarShape)
   fromTensor (t,_) = head $ tensorToList t
 
-instance (TensorScalar a) => ToTensor (HLSpace a '[]) where
+instance (TensorScalar a) => ToTensor (Weights a '[]) where
   toTensor _ = (tensorFromList' (0:.Z) [], EmptyShape)
-  fromTensor _ = HLS HNil
+  fromTensor _ = W Z
 
 instance forall a e l
-         . (TensorScalar a, VectorSpace e, VectorSpace (HLSpace a l), Scalar e ~ a,
-            Scalar (HLSpace a l) ~ a, ToTensor e, ToTensor (HLSpace a l))
-         => ToTensor (HLSpace a (e ': l)) where
-  toTensor (HLS (HCons e l)) =
+         . (TensorScalar a, VectorSpace e, VectorSpace (Weights a l), Scalar e ~ a,
+            Scalar (Weights a l) ~ a, ToTensor e, ToTensor (Weights a l))
+         => ToTensor (Weights a (e ': l)) where
+  toTensor (W ((:.) e l)) =
     let (te,se) = toTensor e
-        (tl,sl) = toTensor (HLS l :: HLSpace a l)
+        (tl,sl) = toTensor (W l :: Weights a l)
     in (tconcat' te tl, HListShape se sl)
   fromTensor (t, HListShape se sl) =
     let (te,tl) = tsplitAt' (shapeSize se) t
-    in HLS $ HCons (fromTensor (te,se) :: e) (unHLS (fromTensor (tl,sl) :: HLSpace a l))
+    in W $ (:.) (fromTensor (te,se) :: e) (unWeights (fromTensor (tl,sl) :: Weights a l))
 
 instance forall a b
          . (ToTensor a, ToTensor b, Scalar a ~ Scalar b, TensorScalar (Scalar a))

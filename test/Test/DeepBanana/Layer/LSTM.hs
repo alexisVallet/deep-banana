@@ -19,15 +19,16 @@ test_lstm = describe "DeepBanana.Layer.LSTM.lstm" $ do
         w' <- uniform s
         return $ w' * 0.16 - 0.08
       w = do
-        w' <- pure hBuild
-              <*> initw (m:.m:.Z)
-              <*> initw (m:.Z)
-              <*> initw (m:.m:.Z)
-              <*> initw (m:.Z)
-              <*> initw (m:.m:.Z)
-              <*> initw (m:.m:.Z)
-              <*> initw (m:.Z)
-        return $ HLS $ hEnd w' :: CudaT IO (HLSpace CFloat (LSTMWeights CFloat))
+        w' <- do
+          w_1 <- initw (m:.m:.Z)
+          w_2 <- initw (m:.Z)
+          w_3 <- initw (m:.m:.Z)
+          w_4 <- initw (m:.Z)
+          w_5 <- initw (m:.m:.Z)
+          w_6 <- initw (m:.m:.Z)
+          w_7 <- initw (m:.Z)
+          return $ w_1:.w_2:.w_3:.w_4:.w_5:.w_6:.w_7:.Z
+        return $ W $ w' :: CudaT IO (Weights CFloat (LSTMWeights CFloat))
       input = pure (,) <*> normal (n:.m:.Z) 0 1 <*> normal (n:.m:.Z) 0 1
     runCudaTEx (createGenerator rng_pseudo_default 42) $ (check_backward lstm w input input :: CudaT IO ())
     return ()

@@ -47,13 +47,13 @@ convolution2d :: forall m a . (MonadCuda m, TensorScalar a)
               -> Layer m a '[Tensor 4 a] (Tensor 4 a) (Tensor 4 a)
 convolution2d padding stride algo =
   combinePasses convfwd convbwd
-  where convfwd (HLS (HCons filters HNil)) fmaps = do
+  where convfwd (W ((:.) filters Z)) fmaps = do
           embedCudaFromST $ do
             filters' <- unsafeThaw filters
             fmaps' <- unsafeThaw fmaps
             convres <- convolution2dFwd cudnnHandle padding stride algo fmaps' filters'
             unsafeFreeze convres
-        convbwd (HLS (HCons filters HNil)) fmaps out = do
+        convbwd (W ((:.) filters Z)) fmaps out = do
           let bwdfilters upgrad =
                 unsafeRunCudaError $ embedCudaErrorFromST $ do
                   filters' <- unsafeThaw filters
@@ -69,27 +69,27 @@ convolution2d padding stride algo =
                   inputsgrad <- convolution2dBwdInputs cudnnHandle padding stride fmaps' filters' upgrad'
                   unsafeFreeze inputsgrad
           return $ broadcast' (shape out)
-            >>> \upgrad -> (HLS $ bwdfilters upgrad `HCons` HNil, bwdinputs upgrad)
+            >>> \upgrad -> (W $ bwdfilters upgrad :. Z, bwdinputs upgrad)
 
 bias :: (MonadCuda m, TensorScalar a)
      => Layer m a '[Tensor 1 a] (Tensor 4 a) (Tensor 4 a)
 bias = combinePasses biasFwd biasBwd
-  where biasFwd (HLS (HCons bias_w HNil)) batch = embedCudaFromST $ do
-          let _:.c:._ = shape batch
+  where biasFwd (W ((:.) bias_w Z)) batch = embedCudaFromST $ do
+          _:.c:._ <- return $ shape batch
           bias_w' <- unsafeThaw bias_w >>= MT.reshape (1:.c:.1:.1:.Z)
           batch' <- unsafeThaw batch
           out <- biasForward cudnnHandle bias_w' batch'
           unsafeFreeze out
         biasBwd _ _ out =
-          return
-          $ broadcast' (shape out)
-          >>> \upgrad ->
-               let biasgrad = unsafeRunCudaError $ embedCudaErrorFromST $ do
-                     upgrad' <- unsafeThaw upgrad
-                     grad <- biasBackward cudnnHandle upgrad' >>= MT.reshape (c:.Z)
-                     unsafeFreeze grad
-                   _:.c:._ = shape out
-               in (HLS (HCons biasgrad HNil), upgrad)
+          case shape out of
+           _:.c:._ -> return
+                      $ broadcast' (shape out)
+                      >>> \upgrad ->
+                           let biasgrad = unsafeRunCudaError $ embedCudaErrorFromST $ do
+                                 upgrad' <- unsafeThaw upgrad
+                                 grad <- biasBackward cudnnHandle upgrad' >>= MT.reshape (c:.Z)
+                                 unsafeFreeze grad
+                           in (W ((:.) biasgrad Z), upgrad)
 
 activation :: (MonadCuda m, TensorScalar a, Shape (Dim n))
            => CuDNN.ActivationMode
@@ -435,7 +435,7 @@ biasBackward :: forall m a . (MonadCudaError m, PrimMonad m, TensorScalar a)
              -> m (MTensor (PrimState m) 4 a)
 biasBackward handle upgrad = embedCudaError unsafeIOToPrim $ do
   withTensor4d (unsafeCoerce upgrad :: IOTensor 4 a)$ \upgraddesc upgradptr -> do
-    let _:.c:._ = MT.shape upgrad
+    _:.c:._ <- return $ MT.shape upgrad
     biasgrad <- emptyTensor $ 1:.c:.1:.1:.Z
     withTensor4d biasgrad $ \biasgraddesc biasgradptr -> do
       (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]

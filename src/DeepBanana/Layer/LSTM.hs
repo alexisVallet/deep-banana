@@ -23,11 +23,11 @@ lstm :: (MonadCuda m, TensorScalar a)
      => Layer m a (LSTMWeights a) (Tensor 2 a, Tensor 2 a) (Tensor 2 a, Tensor 2 a)
 lstm =
   let
-    diag_linear = Layer $ \(HLS (HCons w HNil)) x -> do
+    diag_linear = Layer $ \(W ((:.) w Z)) x -> do
       let n:.m:.Z = shape x
           diag_linear' = (replicateAsRows n *** id') >+> multiply
-      (y, bwdy) <- forwardBackward diag_linear' (HLS HNil) (w, x)
-      return (y, \y' -> let (_, (w', x')) = bwdy y' in (HLS $ HCons w' HNil, x'))
+      (y, bwdy) <- forwardBackward diag_linear' (W Z) (w, x)
+      return (y, \y' -> let (_, (w', x')) = bwdy y' in (W $ (:.) w' Z, x'))
     sigm = activation activation_sigmoid
     tanh = activation activation_tanh
     h_tm1 = first

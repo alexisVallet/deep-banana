@@ -14,7 +14,7 @@ import System.Mem
 import Vision.Image hiding (map, shape)
 import Vision.Image.Storage.DevIL
 
-type Weights = '[
+type MNISTWeights = '[
   Tensor 4 CFloat, Tensor 1 CFloat,
   Tensor 4 CFloat, Tensor 1 CFloat,
   Tensor 4 CFloat, Tensor 1 CFloat,
@@ -41,6 +41,7 @@ main = do
   emnist_val <- runExceptT $ P.toListM
                 $ load_mnist (Just test_images_url) (Just test_labels_url)
                 test_images_file test_labels_file
+  CUDA.set 2
   let gen = createGenerator rng_pseudo_default 42
   case pure (,) <*> emnist_train <*> emnist_val of
    Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
@@ -73,7 +74,7 @@ main = do
                           >-> sampleAccuracy
            putStrLn $ "Validation accuracy: " ++ pack (show valAccuracy)
          cost_grad' w b = cost_grad batch_size nb_labels w b
-         optimize = sgd (rmsprop 0.001 0.9 0.1) cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, HLSpace CFloat Weights) Training ()
+         optimize = sgd (rmsprop 0.001 0.9 0.1) cost_grad' w_0 :: Pipe (Tensor 4 CFloat, Tensor 2 CFloat) (CFloat, Weights CFloat MNISTWeights) Training ()
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
@@ -95,7 +96,7 @@ argmax = L.maximumBy (\(i1,x1) (i2,x2) -> compare x1 x2) . zip [0..]
 cudaToTraining :: Cuda a -> Training a
 cudaToTraining = cudaHoist generalize
 
-model :: Int -> Int -> Layer Cuda CFloat Weights (Tensor 4 CFloat) (Tensor 2 CFloat)
+model :: Int -> Int -> Layer Cuda CFloat MNISTWeights (Tensor 4 CFloat) (Tensor 2 CFloat)
 model batch_size nb_labels =
   let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
              >+> bias
@@ -113,20 +114,20 @@ model batch_size nb_labels =
   >+> lreshape (batch_size:.nb_labels:.Z)
 
 nnet :: Int -> Int
-     -> Layer Cuda CFloat Weights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
+     -> Layer Cuda CFloat MNISTWeights (Tensor 2 CFloat, Tensor 4 CFloat) CFloat
 nnet batch_size nb_labels =
   let criteria = mlrCost (batch_size:.nb_labels:.Z) >+> toScalar in
    (id' *** model batch_size nb_labels) >+> criteria
   
-cost_grad :: Int -> Int -> HLSpace CFloat Weights
+cost_grad :: Int -> Int -> Weights CFloat MNISTWeights
           -> (Tensor 4 CFloat, Tensor 2 CFloat)
-          -> Training (CFloat, HLSpace CFloat Weights)
+          -> Training (CFloat, Weights CFloat MNISTWeights)
 cost_grad batch_size nb_labels w_t (batch,labels) = do
   (cost, bwd) <- cudaToTraining $ forwardBackward (nnet batch_size nb_labels) w_t (labels,batch)
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
 
-predict :: Int -> Int -> HLSpace CFloat Weights -> Tensor 4 CFloat -> Training (Tensor 2 CFloat)
+predict :: Int -> Int -> Weights CFloat MNISTWeights -> Tensor 4 CFloat -> Training (Tensor 2 CFloat)
 predict batch_size nb_labels w_t batch = do
   cudaToTraining $ forward (model batch_size nb_labels) w_t batch
 
@@ -134,18 +135,17 @@ he_init :: Dim 4 -> Training (Tensor 4 CFloat)
 he_init s@(_:.c:.fh:.fw:.Z) =
   normal s 0 (sqrt (2 / (fromIntegral c * fromIntegral fh * fromIntegral fw)))
 
-init_weights :: Int -> Training (HLSpace CFloat Weights)
+init_weights :: Int -> Training (Weights CFloat MNISTWeights)
 init_weights nb_labels = do
-  x <- pure hBuild
-       <*> he_init (32:.1:.3:.3:.Z)
-       <*> zeros (32:.Z)
-       <*> he_init (64:.32:.3:.3:.Z)
-       <*> zeros (64:.Z)
-       <*> he_init (128:.64:.3:.3:.Z)
-       <*> zeros (128:.Z)
-       <*> he_init (10:.128:.3:.3:.Z)
-       <*> zeros (10:.Z)
-  return $ HLS $ hEnd x
+  w_1 <- he_init (32:.1:.3:.3:.Z)
+  b_1 <- zeros (32:.Z)
+  w_2 <- he_init (64:.32:.3:.3:.Z)
+  b_2 <- zeros (64:.Z)
+  w_3 <- he_init (128:.64:.3:.3:.Z)
+  b_3 <- zeros (128:.Z)
+  w_4 <- he_init (10:.128:.3:.3:.Z)
+  b_4 <- zeros (10:.Z)
+  return $ W $ w_1:.b_1:.w_2:.b_2:.w_3:.b_3:.w_4:.b_4:.Z
 
 grey_to_float :: Word8 -> CFloat
 grey_to_float i = (fromIntegral i - 128) / 255
@@ -155,7 +155,7 @@ data InfoState = InfoState {
   rolling_cost :: Maybe CFloat
   }
 
-print_info :: Consumer (CFloat, HLSpace CFloat Weights) Training ()
+print_info :: Consumer (CFloat, Weights CFloat MNISTWeights) Training ()
 print_info = flip evalStateT (InfoState Nothing) $ forM_ [1..] $ \i -> do
   (cost, weights) <- lift $ await
   roll_cost <- do

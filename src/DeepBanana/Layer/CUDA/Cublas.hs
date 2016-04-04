@@ -54,10 +54,10 @@ dot = combinePasses' fwddot bwddot
 
 linear :: (MonadCuda m, TensorScalar a)
        => Layer m a '[Tensor 2 a] (Tensor 2 a) (Tensor 2 a)
-linear = Layer $ \(HLS (HCons w HNil)) x -> do
-  (y, bwd) <- forwardBackward dot (HLS HNil) (x,w)
+linear = Layer $ \(W ((:.) w Z)) x -> do
+  (y, bwd) <- forwardBackward dot (W Z) (x,w)
   return (y, broadcast' (shape y) >>> \y' -> let (_, (x',w')) = bwd y'
-                                                  in (HLS $ HCons w' HNil, x'))
+                                                  in (W $ (:.) w' Z, x'))
 
 -- matrix sum reductions
 sumCols :: (MonadCuda m, TensorScalar a)
