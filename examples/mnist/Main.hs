@@ -14,7 +14,11 @@ import System.Mem
 import Vision.Image hiding (map, shape)
 import Vision.Image.Storage.DevIL
 
-type Weights = '[Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat, Tensor 4 CFloat] 
+type Weights = '[
+  Tensor 4 CFloat, Tensor 1 CFloat,
+  Tensor 4 CFloat, Tensor 1 CFloat,
+  Tensor 4 CFloat, Tensor 1 CFloat,
+  Tensor 4 CFloat, Tensor 1 CFloat] 
 
 type Training = CudaT IO
 
@@ -94,6 +98,7 @@ cudaToTraining = cudaHoist generalize
 model :: Int -> Int -> Layer Cuda CFloat Weights (Tensor 4 CFloat) (Tensor 2 CFloat)
 model batch_size nb_labels =
   let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
+             >+> bias
              >+> activation activation_relu
       pool = pooling2d (2,2) (1,1) (2,2) pooling_max
       pool_avg = pooling2d (3,3) (1,1) (3,3) pooling_average_count_include_padding in
@@ -133,9 +138,13 @@ init_weights :: Int -> Training (HLSpace CFloat Weights)
 init_weights nb_labels = do
   x <- pure hBuild
        <*> he_init (32:.1:.3:.3:.Z)
+       <*> zeros (32:.Z)
        <*> he_init (64:.32:.3:.3:.Z)
+       <*> zeros (64:.Z)
        <*> he_init (128:.64:.3:.3:.Z)
+       <*> zeros (128:.Z)
        <*> he_init (10:.128:.3:.3:.Z)
+       <*> zeros (10:.Z)
   return $ HLS $ hEnd x
 
 grey_to_float :: Word8 -> CFloat
