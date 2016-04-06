@@ -111,6 +111,7 @@ class (MonadCudaError m, MonadCudaRand m)
 instance (MonadCuda m, MonadCudaRand m) => MonadCuda m
 
 createGenerator :: CuRAND.RngType -> CULLong -> Generator
+{-# NOINLINE createGenerator #-}
 createGenerator rngType seed = unsafePerformIO $ do
   g <- alloca $ \genptr -> do
     CuRAND.createGenerator genptr rngType
@@ -122,6 +123,7 @@ createGenerator rngType seed = unsafePerformIO $ do
 -- the internal PRNG state works with this.
 unsafeCuRandWrap :: (MonadCuda m)
                  => (CuRAND.Generator -> IO a) -> m a
+{-# NOINLINE unsafeCuRandWrap #-}
 unsafeCuRandWrap f = do
   G g <- get
   let res = unsafePerformIO $ f g

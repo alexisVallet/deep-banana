@@ -148,19 +148,21 @@ naive_mlrCost l x =
 
 test_softmax :: Spec
 test_softmax = describe "softmax" $ do
-  it "CPU and Cuda naive softmaxes return the same results" $ do
-    let ((actual, expected),_) = runCudaEx (createGenerator rng_pseudo_default 42) $ do
-          x <- normal (8:.8:.Z) 0 0.1 :: Cuda (Tensor 2 CFloat)
-          act <- forward (softmax (8:.8:.Z)) (W Z) x
-          return (act, naive_softmax x)
-    when (not $ allClose expected actual) $ do
-      liftIO $ expectationFailure $
-        "Naive and Cuda algorithm return different results:\nnaive: "
-        ++ show expected ++ "\ncudnn: " ++ show actual :: IO ()
+  it "returns the right result for a simple example" $ do
+    let x = tensorFromList' (3:.3:.Z) [0, 1, 0,
+                                       1, 0, 1,
+                                       1, 1, 1] :: Tensor 2 CFloat
+        expected = tensorFromList' (3:.3:.Z) [
+          exp 0/(exp 0 + exp 1 + exp 0), exp 1/(exp 0 + exp 1 + exp 0), exp 0/(exp 0 + exp 1 + exp 0),
+          exp 1/(exp 1 + exp 0 + exp 1), exp 0/(exp 1 + exp 0 + exp 1), exp 1/(exp 1 + exp 0 + exp 1),
+          1/3, 1/3, 1/3] :: Tensor 2 CFloat
+        (actual,_) = runCudaEx (createGenerator rng_pseudo_default 42)
+                     $ forward (softmax softmax_accurate softmax_mode_instance) (W Z) x
+    actual `shouldBe` expected
   it "has a numerically correct backward pass" $ do
-   runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward (softmax (8:.8:.Z)) (return $ W Z)
-           (normal (8:.8:.Z) 0 0.1 :: CudaT IO (Tensor 2 CFloat))
-           (normal (8:.8:.Z) 0 0.1 :: CudaT IO (Tensor 2 CFloat))
+   runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward (softmax softmax_accurate softmax_mode_instance) (return $ W Z)
+           (normal (8:.8:.Z) 5 2 :: CudaT IO (Tensor 2 CFloat))
+           (normal (8:.8:.Z) 5 2 :: CudaT IO (Tensor 2 CFloat))
    return ()
 
 test_replicateAsCols :: Spec

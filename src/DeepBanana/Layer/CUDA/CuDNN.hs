@@ -16,6 +16,11 @@ module DeepBanana.Layer.CUDA.CuDNN (
   , CuDNN.pooling_max
   , CuDNN.pooling_average_count_include_padding
   , CuDNN.pooling_average_count_exclude_padding
+  , softmax
+  , CuDNN.softmax_fast
+  , CuDNN.softmax_accurate
+  , CuDNN.softmax_mode_instance
+  , CuDNN.softmax_mode_channel
   , nhwc_to_nchw
   , nchw_to_nhwc
   , cudnnHandle
@@ -133,6 +138,25 @@ pooling2d psize padding stride mode =
               upgrad' <- unsafeThaw upgrad
               grad <- pooling2dBwd cudnnHandle psize padding stride mode inp' out' upgrad'
               unsafeFreeze grad
+
+softmax :: (MonadCuda m, TensorScalar a)
+        => CuDNN.SoftmaxAlgorithm
+        -> CuDNN.SoftmaxMode
+        -> Layer m a '[] (Tensor 2 a) (Tensor 2 a)
+softmax algorithm mode = combinePasses' softmaxFwd softmaxBwd
+  where softmaxFwd input = embedCudaFromST $ do
+          let rows:.cols:.Z = shape input
+          input' <- unsafeThaw input >>= MT.reshape (rows:.cols:.1:.1:.Z)
+          out <- softmaxForward cudnnHandle algorithm mode input'
+          unsafeFreeze out >>= reshape (rows:.cols:.Z)
+        softmaxBwd inp out =
+          return $ broadcast' (shape out) >>>
+            \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
+              let rows:.cols:.Z = shape inp
+              mu <- unsafeThaw upgrad >>= MT.reshape (rows:.cols:.1:.1:.Z)
+              mout <- unsafeThaw out >>= MT.reshape (rows:.cols:.1:.1:.Z)
+              mgrad <- softmaxBackward cudnnHandle algorithm mode mout mu
+              unsafeFreeze mgrad >>= reshape (rows:.cols:.Z)
 
 nchw_to_nhwc :: (MonadCuda m, TensorScalar a)
              => Layer m a '[] (Tensor 4 a) (Tensor 4 a)
@@ -584,42 +608,48 @@ pooling2dBwd handle size padding stride mode inp out upgrad = do
                   return $ unsafeCoerce grad
   embedExcept eres
 
--- -- Softmax
--- softmaxFwd :: forall m a . (PrimMonad m, TensorScalar a)
---            => CuDNN.Handle
---            -> CuDNN.SoftmaxAlgorithm
---            -> CuDNN.SoftmaxMode
---            -> MTensor (PrimState m) 2 a
---            -> m (MTensor (PrimState m) 2 a)
--- softmaxFwd handle algo mode input = unsafeIOToPrim $ do
---   withTensor4d (unsafeCoerce input :: IOTensor s a)$ \inpdesc inpptr -> do
---     output <- emptyTensor :: IO (IOTensor s a)
---     withTensor4d output $ \outdesc outptr -> do
---       withArray [1] $ \alpha -> withArray [0] $ \beta -> do
---         handleError "Couldn't compute softmax." $
---           CuDNN.softmaxForward handle algo mode alpha
---           inpdesc inpptr beta outdesc outptr
---         return $ unsafeCoerce output
+-- softmax
+softmaxForward :: forall m a
+               . (PrimMonad m, MonadCudaError m, TensorScalar a)
+               => CuDNN.Handle
+               -> CuDNN.SoftmaxAlgorithm
+               -> CuDNN.SoftmaxMode
+               -> MTensor (PrimState m) 4 a
+               -> m (MTensor (PrimState m) 4 a)
+softmaxForward handle algorithm mode input = embedCudaError unsafeIOToPrim $ do
+  withTensor4d (unsafeCoerce input :: IOTensor 4 a) $ \inpdesc inpptr -> do
+    out <- MT.emptyTensor $ MT.shape input
+    withTensor4d out $ \outdesc outptr -> do
+      (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]
+      handleStatus (Proxy :: Proxy BadParam)
+        $ handleStatus (Proxy :: Proxy ExecutionFailed)
+        $ liftIO
+        $ CuDNN.softmaxForward handle algorithm mode alpha inpdesc inpptr
+        beta outdesc outptr
+      liftIO $ free alpha >> free beta
+    return $ unsafeCoerce out
 
--- softmaxBwd :: forall m s a . (PrimMonad m, MT.Shape s, Nbdim s ~ 4, TensorScalar a)
---            => CuDNN.Handle
---            -> CuDNN.SoftmaxAlgorithm
---            -> CuDNN.SoftmaxMode
---            -> MTensor (PrimState m) s a
---            -> MTensor (PrimState m) s a
---            -> m (MTensor (PrimState m) s a)
--- softmaxBwd handle algo mode src srcdiff = unsafeIOToPrim $ do
---   withTensor4d (unsafeCoerce src :: IOTensor s a) $ \srcdesc srcdata -> do
---     withTensor4d (unsafeCoerce srcdiff :: IOTensor s a)
---       $ \srcdiffdesc srcdiffdata -> do
---       destdiff <- emptyTensor :: IO (IOTensor s a)
---       withTensor4d destdiff $ \destdiffdesc destdiffdata -> do
---         withArray [1] $ \alpha -> withArray [0] $ \beta -> do
---           handleError "Couldn't compute softmax backward pass." $
---             CuDNN.softmaxBackward handle algo mode alpha
---             srcdesc srcdata srcdiffdesc srcdiffdata beta
---             destdiffdesc destdiffdata
---           return $ unsafeCoerce destdiff
+softmaxBackward :: forall m a
+                . (PrimMonad m, MonadCudaError m, TensorScalar a)
+                => CuDNN.Handle
+                -> CuDNN.SoftmaxAlgorithm
+                -> CuDNN.SoftmaxMode
+                -> MTensor (PrimState m) 4 a
+                -> MTensor (PrimState m) 4 a
+                -> m (MTensor (PrimState m) 4 a)
+softmaxBackward handle algorithm mode src upgrad = embedCudaError unsafeIOToPrim $ do
+  withTensor4d (unsafeCoerce src :: IOTensor 4 a) $ \srcdesc srcptr -> do
+    withTensor4d (unsafeCoerce upgrad :: IOTensor 4 a) $ \upgraddesc upgradptr -> do
+      out <- MT.emptyTensor $ MT.shape upgrad
+      withTensor4d out $ \outdesc outptr -> do
+        (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]
+        handleStatus (Proxy :: Proxy BadParam)
+          $ handleStatus (Proxy :: Proxy ExecutionFailed)
+          $ liftIO
+          $ CuDNN.softmaxBackward handle algorithm mode alpha srcdesc srcptr
+          upgraddesc upgradptr beta outdesc outptr
+        liftIO $ free alpha >> free beta
+      return $ unsafeCoerce out
 
 nchw_to_nhwc' :: forall t m a
               . (PrimMonad m, TensorScalar a, MonadError t m, Variant t BadParam,

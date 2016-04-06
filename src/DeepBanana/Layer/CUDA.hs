@@ -7,7 +7,6 @@ module DeepBanana.Layer.CUDA (
   , module DeepBanana.Layer.CUDA.Exception
   , module DeepBanana.Layer.CUDA.Monad
   , module DeepBanana.Layer.CUDA.Numeric
-  , softmax
   , lreshape
   , toScalar
   , mlrCost
@@ -25,15 +24,6 @@ import DeepBanana.Layer.CUDA.Monad
 import DeepBanana.Layer.CUDA.Numeric
 import DeepBanana.Tensor
 import DeepBanana.Tensor.Exception
-
--- "Naive" CUDA implementation of softmax, as workaround to bug in current
--- CuDNN-based softmax.
-softmax :: (MonadCuda m, TensorScalar a)
-        => Dim 2 -> Layer m a '[] (Tensor 2 a) (Tensor 2 a)
-softmax (n:.m:.Z) =
-  lexp
-  >+> id' &&& (sumRows >+> replicateAsCols m >+> inv)
-  >+> multiply
 
 lreshape :: (MonadCuda m, TensorScalar a, Shape (Dim n), Shape (Dim k))
          => Dim k -> Layer m a '[] (Tensor n a) (Tensor k a)
@@ -53,7 +43,7 @@ toScalar = noWeights $ fwdBwdToScalar
 mlrCost :: (MonadCuda m, TensorScalar a)
         => Dim 2 -> Layer m a '[] (Tensor 2 a, Tensor 2 a) (Tensor 1 a)
 mlrCost s@(n:.m:.Z) =
-  id' *** (add -< 10E-5 >+> softmax s)
+  id' *** (add -< 10E-5 >+> softmax softmax_accurate softmax_mode_instance)
   >+> multiply
   >+> sumRows
   >+> add -< 10E-5
