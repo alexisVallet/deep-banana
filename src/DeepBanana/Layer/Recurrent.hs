@@ -15,6 +15,7 @@ module DeepBanana.Layer.Recurrent (
 
 import GHC.Stack
 
+import DeepBanana.Device
 import DeepBanana.Exception
 import DeepBanana.Layer
 import DeepBanana.Layer.CUDA
@@ -188,6 +189,6 @@ lzip = combinePasses' fwdZip bwdZip
   where fwdZip (xs,ys) = return $ zip xs ys
         bwdZip _ _ = return unzip
 
-recMlrCost :: (MonadCuda m, TensorScalar a)
-           => Dim 2 -> Layer m a '[] ([Tensor 2 a], [Tensor 2 a]) (Tensor 1 a)
+recMlrCost :: (MonadCuda m, Device d, TensorScalar a)
+           => Dim 2 -> Layer m a '[] ([Tensor d 2 a], [Tensor d 2 a]) (Tensor d 1 a)
 recMlrCost s = lzip >+> cmap (mlrCost s) >+> lmean

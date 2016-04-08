@@ -4,23 +4,24 @@ module DeepBanana.Layer.LSTM (
   , LSTMWeights
   ) where
 
+import DeepBanana.Device
 import DeepBanana.Prelude
 import DeepBanana.Layer
 import DeepBanana.Layer.CUDA
 import DeepBanana.Tensor
 
-type LSTMWeights a = '[
-    Tensor 2 a
-  , Tensor 1 a
-  , Tensor 2 a
-  , Tensor 1 a
-  , Tensor 2 a
-  , Tensor 2 a
-  , Tensor 1 a
+type LSTMWeights d a = '[
+    Tensor d 2 a
+  , Tensor d 1 a
+  , Tensor d 2 a
+  , Tensor d 1 a
+  , Tensor d 2 a
+  , Tensor d 2 a
+  , Tensor d 1 a
   ]
 
-lstm :: (MonadCuda m, TensorScalar a)
-     => Layer m a (LSTMWeights a) (Tensor 2 a, Tensor 2 a) (Tensor 2 a, Tensor 2 a)
+lstm :: (MonadCuda m, Device d, TensorScalar a)
+     => Layer m a (LSTMWeights d a) (Tensor d 2 a, Tensor d 2 a) (Tensor d 2 a, Tensor d 2 a)
 lstm =
   let
     diag_linear = Layer $ \(W ((:.) w Z)) x -> do

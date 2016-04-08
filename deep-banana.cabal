@@ -36,14 +36,16 @@ library
                      , DeepBanana.Prelude
                      , DeepBanana.Data
                      , DeepBanana.Data.Exception
-                     , DeepBanana.Cubits
                      , DeepBanana.Exception
                      , DeepBanana.HList
                      , DeepBanana.Weights
+                     , DeepBanana.Device
+                     , DeepBanana.Device.Cubits
+                     , DeepBanana.Device.CuDNN
+                     , DeepBanana.Device.CuRAND
+                     , DeepBanana.Device.Monad
   build-depends:       base >= 4.7
                      , cuda >= 0.7
-                     , hcudnn >= 0.1
-                     , hcurand >= 0.1
                      , transformers >= 0.4
                      , mtl >= 2.1
                      , primitive >= 0.6
@@ -65,16 +67,9 @@ library
                      , lens >= 4.13
   default-language:    Haskell2010
   default-extensions:  ScopedTypeVariables
-                     , DataKinds
-                     , TypeOperators
-                     , PolyKinds
-                     , FlexibleContexts
-                     , FlexibleInstances
-                     , MultiParamTypeClasses
-                     , NoImplicitPrelude
-                     , ImplicitParams
-                     , OverloadedStrings
-  Extra-libraries:     hnn_cubits
+  extra-libraries:     hnn_cubits
+                     , cudnn
+                     , curand
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
 
 test-suite deep-banana-test

@@ -6,16 +6,51 @@ needed, although orphan instances for 'CFloat' and 'CDouble': 'Generic', 'NFData
 'Serialize'.
 -}
 module DeepBanana.Tensor.TensorScalar (
-    TensorScalar(..)
-  , CFloat, CDouble, mySizeOf
+    TensorScalar
+  , CFloat
+  , CDouble
+  , mySizeOf
+  , datatype
+  , thresh
+  , rawMul
+  , rawAdd
+  , rawAbs
+  , rawSignum
+  , rawSubtract
+  , rawNegate
+  , rawScale
+  , rawLog
+  , rawInv
+  , rawExp
+  , rawSqrt
+  , rawSin
+  , rawCos
+  , rawTan
+  , rawAsin
+  , rawAcos
+  , rawAtan
+  , rawSinh
+  , rawCosh
+  , rawTanh
+  , rawAsinh
+  , rawAcosh
+  , rawAtanh
+  , rawPow
+  , rawMax
+  , broadcast_copy
+  , generateUniform
+  , generateNormal
+  , generateLogNormal
   ) where
 
 import qualified Data.Serialize as S
-import qualified Foreign.CUDA as CUDA
-import qualified Foreign.CUDA.CuRAND as CuRAND
 import qualified Foreign.CUDA.Cublas as Cublas
 import qualified Foreign.CUDA.CuDNN as CuDNN
-import qualified DeepBanana.Cubits as Cubits
+
+import DeepBanana.Device
+import qualified DeepBanana.Device.CUDA as CUDA
+import qualified DeepBanana.Device.CuRAND as CuRAND
+import qualified DeepBanana.Device.Cubits as Cubits
 import DeepBanana.Prelude
 
 instance Generic CFloat where
@@ -42,50 +77,50 @@ class (Cublas.Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, S.S
   -- | The corresponding CuDNN datatype.
   datatype :: Proxy a -> CuDNN.DataType
   -- | Low-level in-place numeric operations.
-  thresh :: CUDA.DevicePtr a -> CSize -> a -> CUDA.DevicePtr a -> IO ()
-  rawMul :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
-  rawAdd :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
-  rawAbs :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawSignum :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawSubtract :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
-  rawNegate :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawScale :: a -> CUDA.DevicePtr a -> CSize -> IO ()
-  rawLog :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawInv :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawExp :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawSqrt :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawSin :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawCos :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawTan :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawAsin :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawAcos :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawAtan :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawSinh :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawCosh :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawTanh :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawAsinh :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawAcosh :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawAtanh :: CUDA.DevicePtr a -> CSize -> IO ()
-  rawPow :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
-  rawMax :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> IO ()
-  broadcast_copy :: CInt -> CSize -> CUDA.DevicePtr a -> CUDA.DevicePtr CInt -> CUDA.DevicePtr a -> CUDA.DevicePtr CInt -> IO ()
+  thresh :: CUDA.DevicePtr a -> CSize -> a -> CUDA.DevicePtr a -> DeviceM d ()
+  rawMul :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawAdd :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawAbs :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawSignum :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawSubtract :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawNegate :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawScale :: a -> CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawLog :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawInv :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawExp :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawSqrt :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawSin :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawCos :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawTan :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawAsin :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawAcos :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawAtan :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawSinh :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawCosh :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawTanh :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawAsinh :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawAcosh :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawAtanh :: CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawPow :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  rawMax :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> DeviceM d ()
+  broadcast_copy :: CInt -> CSize -> CUDA.DevicePtr a -> CUDA.DevicePtr CInt -> CUDA.DevicePtr a -> CUDA.DevicePtr CInt -> DeviceM d ()
   -- | Low-level CuRAND bindings.
   generateUniform :: CuRAND.Generator
                   -> CUDA.DevicePtr a
                   -> CSize
-                  -> IO CuRAND.Status
+                  -> DeviceM d CuRAND.Status
   generateNormal :: CuRAND.Generator
                  -> CUDA.DevicePtr a
                  -> CSize
                  -> a
                  -> a
-                 -> IO CuRAND.Status
+                 -> DeviceM d CuRAND.Status
   generateLogNormal :: CuRAND.Generator
                     -> CUDA.DevicePtr a
                     -> CSize
                     -> a
                     -> a
-                    -> IO CuRAND.Status
+                    -> DeviceM d CuRAND.Status
 
 instance TensorScalar CFloat where
   datatype = const CuDNN.float

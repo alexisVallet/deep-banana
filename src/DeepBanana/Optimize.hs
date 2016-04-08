@@ -9,6 +9,7 @@ module DeepBanana.Optimize (
 import ClassyPrelude
 import Pipes.Lift
 
+import DeepBanana.Device
 import DeepBanana.Exception
 import DeepBanana.Layer
 import DeepBanana.Prelude
@@ -59,8 +60,8 @@ class (Monad m, VectorSpace t) => HasElemwiseMax m t where
   elemwiseMax :: t -> Scalar t -> m t
 
 instance (MonadError t m, Variant t OutOfMemory, Variant t IncompatibleShape,
-          Shape (Dim n), TensorScalar a)
-         => HasElemwiseMax m (Tensor n a) where
+          Shape (Dim n), Device d, TensorScalar a)
+         => HasElemwiseMax m (Tensor d n a) where
   elemwiseMax t x = do
     ones <- ones (shape t)
     elementwiseMax t $ x *^ ones

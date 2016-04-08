@@ -1,6 +1,7 @@
 module DeepBanana (
   -- Main modules.
-    module DeepBanana.Tensor
+    module DeepBanana.Device
+  , module DeepBanana.Tensor
   , module DeepBanana.Exception
   , module DeepBanana.Layer
   , module DeepBanana.Layer.Recurrent
@@ -10,6 +11,7 @@ module DeepBanana (
   , module DeepBanana.Optimize
   ) where
 
+import DeepBanana.Device
 import DeepBanana.Exception
 import DeepBanana.Tensor
 import DeepBanana.Layer

@@ -36,6 +36,7 @@ import Vision.Primitive hiding (Shape, Z, (:.))
 import qualified Vision.Primitive as VP
 
 import DeepBanana.Data.Exception
+import DeepBanana.Device
 import DeepBanana.Exception
 import DeepBanana.Prelude
 import DeepBanana.Tensor as T
@@ -223,10 +224,10 @@ batch_images_pad_labels nb_labels batch_size pad_label = do
 
 batch_to_gpu :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
                  Variant t IncompatibleSize, TensorScalar a,
-                 Shape (Dim n1), Shape (Dim n2))
+                 Shape (Dim n1), Shape (Dim n2), Device d1, Device d2)
              => Dim n1
              -> Dim n2
-             -> Pipe (SVector a, SVector a) (Tensor n1 a, Tensor n2 a) m ()
+             -> Pipe (SVector a, SVector a) (Tensor d1 n1 a, Tensor d2 n2 a) m ()
 batch_to_gpu shp1 shp2 = forever $ do
   (batch, labels) <- await
   tbatch <- fromVector shp1 batch
@@ -235,10 +236,10 @@ batch_to_gpu shp1 shp2 = forever $ do
 
 batch_labels_to_gpu :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
                         Variant t IncompatibleSize, TensorScalar a,
-                        Shape (Dim n1), Shape (Dim n2))
+                        Shape (Dim n1), Shape (Dim n2), Device d1, Device d2)
                     => Dim n1
                     -> Dim n2
-                    -> Pipe (SVector a, [SVector a]) (Tensor n1 a, [Tensor n2 a]) m ()
+                    -> Pipe (SVector a, [SVector a]) (Tensor d1 n1 a, [Tensor d2 n2 a]) m ()
 batch_labels_to_gpu shp1 shp2 = forever $ do
   (batch, labels) <- await
   tbatch <- fromVector shp1 batch

@@ -1,8 +1,6 @@
 flags: {}
 packages:
 - '.'
-- 'hcudnn'
-- 'hcurand'
 - 'cublas'
 extra-deps:
 - cuda-0.7.0.0

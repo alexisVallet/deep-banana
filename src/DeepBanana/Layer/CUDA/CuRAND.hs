@@ -10,6 +10,7 @@ import Foreign.Marshal
 import qualified Foreign.CUDA.CuRAND as CuRAND
 import System.IO.Unsafe
 
+import DeepBanana.Device
 import DeepBanana.Exception
 import DeepBanana.Layer
 import DeepBanana.Layer.CUDA.Monad
@@ -18,41 +19,43 @@ import DeepBanana.Tensor
 import DeepBanana.Tensor.Exception
 import qualified DeepBanana.Tensor.Mutable as MT
 
-uniform :: (MonadCuda m,
-            TensorScalar a, Shape (Dim n))
-        => Dim n -> m (Tensor n a)
+uniform :: forall m d n a
+        . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
+        => Dim n -> m (Tensor d n a)
 uniform shp = do
   eres <- unsafeCuRandWrap $ \gen -> runExceptT $ do
     res <- MT.emptyTensor shp
     liftIO $ MT.withDevicePtr res $ \resptr -> do
-      generateUniform gen resptr $ fromIntegral $ size shp
+      generateUniform (Proxy :: Proxy d) gen resptr $ fromIntegral $ size shp
     unsafeFreeze res
   embedExcept eres
 
-normal :: (MonadCuda m, TensorScalar a, Shape (Dim n))
-       =>  Dim n -> a -> a -> m (Tensor n a)
+normal :: forall m d n a
+       . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
+       =>  Dim n -> a -> a -> m (Tensor d n a)
 normal shp mean std = do
   eres <- unsafeCuRandWrap $ \gen -> runExceptT $ do
     res <- MT.emptyTensor shp
     liftIO $ MT.withDevicePtr res $ \resptr -> do
-      generateNormal gen resptr (fromIntegral $ size shp) mean std
+      generateNormal (Proxy :: Proxy d) gen resptr (fromIntegral $ size shp) mean std
     unsafeFreeze res
   embedExcept eres
 
-logNormal :: (MonadCuda m, TensorScalar a, Shape (Dim n))
-          => Dim n -> a -> a -> m (Tensor n a)
+logNormal :: forall m d n a
+          . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
+          => Dim n -> a -> a -> m (Tensor d n a)
 logNormal shp mean std = do
   eres <- unsafeCuRandWrap $ \gen -> runExceptT $ do
     res <- MT.emptyTensor shp
     liftIO $ MT.withDevicePtr res $ \resptr -> do
-      generateLogNormal gen resptr (fromIntegral $ size shp) mean std
+      generateLogNormal (Proxy :: Proxy d) gen resptr (fromIntegral $ size shp) mean std
     unsafeFreeze res
   embedExcept eres
 
 -- dropout
-dropout :: (MonadCuda m, TensorScalar a, Shape (Dim n))
+dropout :: (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
         => a
-        -> Layer m a '[] (Tensor n a) (Tensor n a)
+        -> Layer m a '[] (Tensor d n a) (Tensor d n a)
 dropout drop_proba = noWeights fwdbwd
   -- Simple dropout algo: generate a random tensor of 0 and 1s,
   -- elementwise multiply with the same random tensor on both forward
@@ -68,13 +71,14 @@ dropout drop_proba = noWeights fwdbwd
 -- dropout
 -- compute a random mask of ones and zeros
 -- to apply elementwise to the input tensor.
-dropoutMaskIO :: (MonadIO m, PrimMonad m, PrimState m ~ RealWorld,
-                  MonadError t m, Variant t OutOfMemory,
-                  TensorScalar a, Shape (Dim n))
+dropoutMaskIO :: forall m t d n a
+              . (MonadIO m, PrimMonad m, PrimState m ~ RealWorld,
+                 MonadError t m, Variant t OutOfMemory,
+                 TensorScalar a, Shape (Dim n), Device d)
               => CuRAND.Generator
               -> Dim n
               -> a
-              -> m (MT.IOTensor n a)
+              -> m (MT.IOTensor d n a)
 dropoutMaskIO gen shp drop_proba = do
   -- Simple algo for dropout of activations:
   -- 1- generate an array of random values between 0 and 1
@@ -83,7 +87,8 @@ dropoutMaskIO gen shp drop_proba = do
   rand_array <- MT.emptyTensor shp
   liftIO $ MT.withDevicePtr rand_array $ \randarrayptr -> do
     -- generate random array
-    generateUniform gen randarrayptr $ fromIntegral $ size shp
+    generateUniform (Proxy :: Proxy d) gen randarrayptr $ fromIntegral $ size shp
     -- threshold it
-    thresh randarrayptr (fromIntegral $ size shp) drop_proba randarrayptr
+    thresh (Proxy :: Proxy d) randarrayptr (fromIntegral $ size shp)
+      drop_proba randarrayptr
     return rand_array
