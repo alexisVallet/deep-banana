@@ -12,6 +12,7 @@ import DeepBanana
 import DeepBanana.Layer.CUDA
 import DeepBanana.Layer.Recurrent
 
+import Config
 import Test.DeepBanana.Layer.NumericGrad
 
 test_recurrent_layers :: Spec
@@ -20,8 +21,7 @@ test_recurrent_layers = do
   test_recMlrCost
   test_lunfold_and_recMlrCost
 
-
-xavier :: (Monad m, TensorScalar a) => Dim 2 -> CudaT m (Tensor 2 a)
+xavier :: (Device d, Monad m, TensorScalar a) => Dim 2 -> CudaT d m (Tensor d 2 a)
 xavier s@(nb_input:.nb_output:.Z) = do
   x <- uniform s
   return $ (sqrt 6 / sqrt (fromIntegral $ nb_input + nb_output)) * (x - 0.5)
@@ -43,13 +43,13 @@ test_lunfold = describe "DeepBanana.Layer.Recurrent.lunfold" $ do
           lunfold' out_length (h_to_out &&& h_to_h)
         w = do
           w' <- do
-            w_1 <- xavier (nb_features:.nb_output:.Z)
+            w_1 <- xavier (nb_output:.nb_features:.Z)
             w_2 <- xavier (nb_features:.nb_features:.Z)
             return $ w_1:.w_2:.Z
           return $ W w'
-        h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01 :: CudaT IO (Tensor 2 CFloat)
+        h_0 = normal (nb_samples:.nb_features:.Z) 0 0.01 :: CudaT TestDevice IO (Tensor TestDevice 2 CFloat)
         upgrad = replicateM out_length $ normal (nb_samples:.nb_output:.Z) 0 0.01
-    runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward recnet w h_0 upgrad
+    runCudaTEx (generator rng_pseudo_default 42) $ check_backward recnet w h_0 upgrad
     return ()
 
 test_recMlrCost :: Spec
@@ -61,7 +61,7 @@ test_recMlrCost = describe "DeepBanana.Layer.Recurrent.recMlrCost" $ do
         out_seq = replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
         labels = replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
         cost = recMlrCost (nb_samples:.nb_output:.Z) >+> toScalar
-    runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward cost (return zeroV) (pure (,) <*> labels <*> out_seq) (return 1 :: CudaT IO CFloat)
+    runCudaTEx (generator rng_pseudo_default 42) $ check_backward cost (return zeroV) (pure (,) <*> labels <*> out_seq) (return 1 :: CudaT TestDevice IO CFloat)
     return ()
 
 test_lunfold_and_recMlrCost :: Spec
@@ -83,7 +83,7 @@ test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> 
         fullNet = (id' *** recnet) >+> cost
         w = do
           w' <- do
-            w_1 <- xavier (nb_features:.nb_output:.Z)
+            w_1 <- xavier (nb_output:.nb_features:.Z)
             w_2 <- xavier (nb_features:.nb_features:.Z)
             return $ w_1:.w_2:.Z
           return $ W w'
@@ -91,5 +91,5 @@ test_lunfold_and_recMlrCost = describe "DeepBanana.Layer.Recurrent: lunfold >+> 
           x <- uniform (nb_samples:.nb_features:.Z)
           labels <- replicateM out_length $ uniform (nb_samples:.nb_output:.Z)
           return (labels,x)
-    runCudaTEx (createGenerator rng_pseudo_default 42) $ check_backward fullNet w input (return 1 :: CudaT IO CFloat)
+    runCudaTEx (generator rng_pseudo_default 42) $ check_backward fullNet w input (return 1 :: CudaT TestDevice IO CFloat)
     return ()

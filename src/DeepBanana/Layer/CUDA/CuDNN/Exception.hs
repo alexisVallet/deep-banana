@@ -24,10 +24,10 @@ module DeepBanana.Layer.CUDA.CuDNN.Exception (
   , handleStatus
   ) where
 
-import qualified Foreign.CUDA.CuDNN as CuDNN
 import GHC.Stack
 import System.IO.Unsafe
 
+import qualified DeepBanana.Device.CuDNN as CuDNN
 import DeepBanana.Prelude
 import DeepBanana.Exception
 import DeepBanana.Layer.CUDA.Exception

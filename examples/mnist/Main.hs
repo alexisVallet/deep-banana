@@ -20,8 +20,6 @@ type MNISTWeights d = '[
   Tensor d 4 CFloat, Tensor d 1 CFloat,
   Tensor d 4 CFloat, Tensor d 1 CFloat] 
 
-type Training = CudaT IO
-
 main :: IO ()
 main = do
   let train_images_url = "http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz"
@@ -43,14 +41,14 @@ main = do
   emnist_val <- runExceptT $ P.toListM
                 $ load_mnist (Just test_images_url) (Just test_labels_url)
                 test_images_file test_labels_file
-  let gen = createGenerator rng_pseudo_default 42
+  let gen = generator rng_pseudo_default 42 :: Generator 1
   case pure (,) <*> emnist_train <*> emnist_val of
    Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
    Right (mnist_train,mnist_val) -> do
      putStrLn "Starting training..."
      (merr,_) <- runCudaT gen $ do
        putStrLn "Initializing weights..."
-       w_0 <- init_weights nb_labels
+       w_0 <- init_weights nb_labels :: CudaT 1 IO (Weights CFloat (MNISTWeights 1))
        let
          nb_val_batches = length mnist_val `div` batch_size
          preprocessing =
@@ -58,7 +56,7 @@ main = do
            >-> batch_images nb_labels batch_size
            >-> P.map (\(b,l) -> (VS.map grey_to_float b, l))
            >-> batch_to_gpu (batch_size:.1:.28:.28:.Z) (batch_size:.nb_labels:.Z)
-           :: Pipe (Grey, Int) (Tensor 1 4 CFloat, Tensor 1 2 CFloat) Training ()
+           :: Pipe (Grey, Int) (Tensor 1 4 CFloat, Tensor 1 2 CFloat) (CudaT d IO) ()
          validate (c,w) = do
            let sampleAccuracy = forever $ do
                  (b,l) <- await
@@ -77,7 +75,7 @@ main = do
                           >-> sampleAccuracy
            putStrLn $ "Validation accuracy: " ++ pack (show valAccuracy)
          cost_grad' w b = cost_grad batch_size nb_labels w b
-         optimize = sgd (rmsprop 0.001 0.9 0.1) cost_grad' w_0 :: Pipe (Tensor 1 4 CFloat, Tensor 1 2 CFloat) (CFloat, Weights CFloat (MNISTWeights 1)) Training ()
+         optimize = sgd (rmsprop 0.001 0.9 0.1) cost_grad' w_0 :: Pipe (Tensor 1 4 CFloat, Tensor 1 2 CFloat) (CFloat, Weights CFloat (MNISTWeights 1)) (CudaT 1 IO) ()
        putStrLn "Launching sgd..."
        runEffect
          $ forever (randomize mnist_train)
@@ -97,10 +95,10 @@ splitEvery n = L.unfoldr (\xs -> case splitAt n xs of
 argmax :: (Ord a) => [a] -> (Int, a)
 argmax = L.maximumBy (\(i1,x1) (i2,x2) -> compare x1 x2) . zip [0..]
 
-cudaToTraining :: Cuda a -> Training a
+cudaToTraining :: Cuda d a -> (CudaT d IO) a
 cudaToTraining = cudaHoist generalize
 
-model :: (Device d) => Int -> Int -> Layer Cuda CFloat (MNISTWeights d) (Tensor d 4 CFloat) (Tensor d 2 CFloat)
+model :: (Device d) => Int -> Int -> Layer (Cuda d) CFloat (MNISTWeights d) (Tensor d 4 CFloat) (Tensor d 2 CFloat)
 model batch_size nb_labels =
   let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
              >+> bias
@@ -119,28 +117,28 @@ model batch_size nb_labels =
 
 nnet :: (Device d)
      => Int -> Int
-     -> Layer Cuda CFloat (MNISTWeights d) (Tensor d 2 CFloat, Tensor d 4 CFloat) CFloat
+     -> Layer (Cuda d) CFloat (MNISTWeights d) (Tensor d 2 CFloat, Tensor d 4 CFloat) CFloat
 nnet batch_size nb_labels =
   let criteria = mlrCost (batch_size:.nb_labels:.Z) >+> toScalar in
    (id' *** model batch_size nb_labels) >+> criteria
   
 cost_grad :: (Device d) => Int -> Int -> Weights CFloat (MNISTWeights d)
           -> (Tensor d 4 CFloat, Tensor d 2 CFloat)
-          -> Training (CFloat, Weights CFloat (MNISTWeights d))
+          -> CudaT d IO (CFloat, Weights CFloat (MNISTWeights d))
 cost_grad batch_size nb_labels w_t (batch,labels) = do
   (cost, bwd) <- cudaToTraining $ forwardBackward (nnet batch_size nb_labels) w_t (labels,batch)
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
 
-predict :: (Device d) => Int -> Int -> Weights CFloat (MNISTWeights d) -> Tensor d 4 CFloat -> Training (Tensor d 2 CFloat)
+predict :: (Device d) => Int -> Int -> Weights CFloat (MNISTWeights d) -> Tensor d 4 CFloat -> CudaT d IO (Tensor d 2 CFloat)
 predict batch_size nb_labels w_t batch = do
   cudaToTraining $ forward (model batch_size nb_labels) w_t batch
 
-he_init :: (Device d) => Dim 4 -> Training (Tensor d 4 CFloat)
+he_init :: (Device d) => Dim 4 -> CudaT d IO (Tensor d 4 CFloat)
 he_init s@(_:.c:.fh:.fw:.Z) =
   normal s 0 (sqrt (2 / (fromIntegral c * fromIntegral fh * fromIntegral fw)))
 
-init_weights :: (Device d) => Int -> Training (Weights CFloat (MNISTWeights d))
+init_weights :: (Device d) => Int -> CudaT d IO (Weights CFloat (MNISTWeights d))
 init_weights nb_labels = do
   w_1 <- he_init (32:.1:.3:.3:.Z)
   b_1 <- zeros (32:.Z)
@@ -160,7 +158,7 @@ data InfoState = InfoState {
   rolling_cost :: Maybe CFloat
   }
 
-print_info :: Device d => Consumer (CFloat, Weights CFloat (MNISTWeights d)) Training ()
+print_info :: Device d => Consumer (CFloat, Weights CFloat (MNISTWeights d)) (CudaT d IO) ()
 print_info = flip evalStateT (InfoState Nothing) $ forM_ [1..] $ \i -> do
   (cost, weights) <- lift $ await
   roll_cost <- do

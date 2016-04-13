@@ -44,11 +44,10 @@ module DeepBanana.Tensor.TensorScalar (
   ) where
 
 import qualified Data.Serialize as S
-import qualified Foreign.CUDA.Cublas as Cublas
-import qualified Foreign.CUDA.CuDNN as CuDNN
 
 import DeepBanana.Device
 import qualified DeepBanana.Device.CUDA as CUDA
+import qualified DeepBanana.Device.CuDNN as CuDNN
 import qualified DeepBanana.Device.CuRAND as CuRAND
 import qualified DeepBanana.Device.Cubits as Cubits
 import DeepBanana.Prelude
@@ -72,7 +71,7 @@ mySizeOf _ = sizeOf (error "mySizeOf: token parameter that shouldn't have been e
 -- | Type class for tensor scalars. Basically requires them to be storable, serializable,
 -- deepseqable numbers that can be handled by CUDA, Cublas, CuDNN and Haskell. Basically
 -- requires low-level numeric routines.
-class (Cublas.Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, S.Serialize a, NFData a)
+class (Floating a, Storable a, VectorSpace a, a ~ Scalar a, S.Serialize a, NFData a)
       => TensorScalar a where
   -- | The corresponding CuDNN datatype.
   datatype :: Proxy a -> CuDNN.DataType
@@ -105,17 +104,17 @@ class (Cublas.Cublas a, Floating a, Storable a, VectorSpace a, a ~ Scalar a, S.S
   rawMax :: CUDA.DevicePtr a -> CUDA.DevicePtr a -> CSize -> DeviceM d ()
   broadcast_copy :: CInt -> CSize -> CUDA.DevicePtr a -> CUDA.DevicePtr CInt -> CUDA.DevicePtr a -> CUDA.DevicePtr CInt -> DeviceM d ()
   -- | Low-level CuRAND bindings.
-  generateUniform :: CuRAND.Generator
+  generateUniform :: CuRAND.Generator d
                   -> CUDA.DevicePtr a
                   -> CSize
                   -> DeviceM d CuRAND.Status
-  generateNormal :: CuRAND.Generator
+  generateNormal :: CuRAND.Generator d
                  -> CUDA.DevicePtr a
                  -> CSize
                  -> a
                  -> a
                  -> DeviceM d CuRAND.Status
-  generateLogNormal :: CuRAND.Generator
+  generateLogNormal :: CuRAND.Generator d
                     -> CUDA.DevicePtr a
                     -> CSize
                     -> a

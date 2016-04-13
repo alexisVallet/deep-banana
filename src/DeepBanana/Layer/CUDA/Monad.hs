@@ -5,27 +5,12 @@ module DeepBanana.Layer.CUDA.Monad (
   , CudaT
   , Cuda
   , CudaExceptions
-  , Generator
-  , createGenerator
-  , CuRAND.RngType
-  , CuRAND.rng_test
-  , CuRAND.rng_pseudo_default
-  , CuRAND.rng_pseudo_xorwow
-  , CuRAND.rng_pseudo_mrg32k3a
-  , CuRAND.rng_pseudo_mt19937
-  , CuRAND.rng_pseudo_philox4_32_10
-  , CuRAND.rng_quasi_default
-  , CuRAND.rng_quasi_sobol32
-  , CuRAND.rng_quasi_scrambled_sobol32
-  , CuRAND.rng_quasi_sobol64
-  , CuRAND.rng_quasi_scrambled_sobol64
   , MonadCudaError(..)
   , runCudaErrorT
   , runCudaError
   , unsafeRunCudaError
   , cudaErrorHoist
   , MonadCuda(..)
-  , unsafeCuRandWrap
   , runCudaT
   , runCudaTEx
   , runCuda
@@ -39,14 +24,11 @@ module DeepBanana.Layer.CUDA.Monad (
   ) where
 
 import Control.Lens
-import qualified Foreign.CUDA.CuRAND as CuRAND
+import qualified Control.Monad.State.Strict as SState
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad.Primitive (unsafePrimToPrim)
-import qualified Control.Monad.State.Strict as SState
-import qualified Control.Monad.Writer.Strict as SWriter
-import qualified Control.Monad.RWS.Strict as SRWS
-import Control.Monad.Error (ErrorT, Error)
 
+import DeepBanana.Device
 import DeepBanana.Prelude
 import DeepBanana.Exception
 import DeepBanana.Layer.CUDA.Exception
@@ -58,13 +40,13 @@ type CudaErrorT = ExceptT CudaExceptions
 
 type CudaError = CudaErrorT Identity
 
-type CudaRandT = StateT Generator
+type CudaRandT d = SState.StateT (Generator d)
 
-type CudaRand = CudaRandT Identity
+type CudaRand d = CudaRandT d Identity
 
-type CudaT m = CudaErrorT (CudaRandT m)
+type CudaT d m = CudaErrorT (CudaRandT d m)
 
-type Cuda = CudaT Identity
+type Cuda d = CudaT d Identity
 
 type CudaExceptions = Coproduct '[
                         AllocFailed
@@ -78,8 +60,6 @@ type CudaExceptions = Coproduct '[
                       , IncompatibleSize
                       , EmptyBatch
                       ]
-
-newtype Generator = G CuRAND.Generator
 
 class (MonadError CudaExceptions m)
       => MonadCudaError m
@@ -102,61 +82,41 @@ cudaErrorHoist :: (Monad m, Monad m')
                => (forall a . m a -> m' a) -> CudaErrorT m a -> CudaErrorT m' a
 cudaErrorHoist = hoist
 
-class (MonadState Generator m)
-      => MonadCudaRand m
-instance (MonadState Generator m) => MonadCudaRand m
+class (Device d, MonadState (Generator d) m)
+      => MonadCudaRand d m
+instance (Device d, MonadState (Generator d) m) => MonadCudaRand d m
 
-class (MonadCudaError m, MonadCudaRand m)
-      => MonadCuda m
-instance (MonadCuda m, MonadCudaRand m) => MonadCuda m
-
-createGenerator :: CuRAND.RngType -> CULLong -> Generator
-{-# NOINLINE createGenerator #-}
-createGenerator rngType seed = unsafePerformIO $ do
-  g <- alloca $ \genptr -> do
-    CuRAND.createGenerator genptr rngType
-    peek genptr
-  CuRAND.setPseudoRandomGeneratorSeed g seed
-  return $ G g
-  
--- The trick to make CuRAND work in pure code is that all the code that updates
--- the internal PRNG state works with this.
-unsafeCuRandWrap :: (MonadCuda m)
-                 => (CuRAND.Generator -> IO a) -> m a
-{-# NOINLINE unsafeCuRandWrap #-}
-unsafeCuRandWrap f = do
-  G g <- get
-  let res = unsafePerformIO $ f g
-  put $ G g
-  return res
+class (MonadCudaError m, MonadCudaRand d m)
+      => MonadCuda d m
+instance (MonadCudaError m, MonadCudaRand d m) => MonadCuda d m
 
 runCudaT :: (Monad m)
-         => Generator -> CudaT m a -> m (Either CudaExceptions a, Generator)
-runCudaT gen action = flip runStateT gen $ runExceptT action
+         => Generator d -> CudaT d m a -> m (Either CudaExceptions a, Generator d)
+runCudaT gen action = flip SState.runStateT gen $ runExceptT action
 
-runCudaTEx :: (MonadThrow m) => Generator -> CudaT m a -> m (a, Generator)
+runCudaTEx :: (MonadThrow m) => Generator d -> CudaT d m a -> m (a, Generator d)
 runCudaTEx seed action = do
   (eres, gen) <- runCudaT seed action
   case eres of
    Left err -> throwM err
    Right res -> return (res, gen)
 
-runCuda :: Generator -> Cuda a -> (Either CudaExceptions a, Generator)
+runCuda :: Generator d -> Cuda d a -> (Either CudaExceptions a, Generator d)
 runCuda gen action = runIdentity $ runCudaT gen action
 
-runCudaEx :: Generator -> Cuda a -> (a, Generator)
+runCudaEx :: Generator d -> Cuda d a -> (a, Generator d)
 runCudaEx gen action =
   let (eres, gen) = runCuda gen action
   in (unsafeRunExcept eres, gen)
 
-cudaHoist :: (Monad m, Monad n) => (forall a . m a -> n a) -> CudaT m a -> CudaT n a
+cudaHoist :: (Monad m, Monad n) => (forall a . m a -> n a) -> CudaT d m a -> CudaT d n a
 cudaHoist morph = hoist (hoist morph)
 
 unsafeIOToPrim :: (PrimMonad m) => IO a -> m a
 unsafeIOToPrim = unsafePrimToPrim
 
-embedCuda :: (Monad m, MonadCuda m')
-          => (forall a . m a -> m' a) -> CudaT m b -> m' b
+embedCuda :: (Monad m, MonadCuda d m')
+          => (forall a . m a -> m' a) -> CudaT d m b -> m' b
 embedCuda morph action = do
   gen <- get
   (eres, gen') <- morph $ runCudaT gen action
@@ -165,7 +125,7 @@ embedCuda morph action = do
    Left err -> throwError err
    Right res -> return res
 
-embedCudaFromST :: (MonadCuda m) => (forall s . CudaT (ST s) a) -> m a
+embedCudaFromST :: (MonadCuda d m) => (forall s . CudaT d (ST s) a) -> m a
 embedCudaFromST action = do
   gen <- get
   let (eres, gen') = runST $ runCudaT gen action

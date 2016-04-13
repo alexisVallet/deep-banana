@@ -7,6 +7,7 @@ module DeepBanana.Device.Cubits where
 import Foreign.CUDA.Types
 
 import DeepBanana.Device.Monad
+import DeepBanana.Device.CuRAND
 import DeepBanana.Prelude
 
 #include <hnn_cubits.h>
@@ -177,3 +178,6 @@ foreign import ccall "broadcast_copyDouble"
 
 foreign import ccall "&freeDevicePtr"
   freeDevicePtr :: FunPtr (Ptr a -> IO ())
+
+foreign import ccall "&freeCuRANDGenerator"
+  freeCuRANDGenerator :: FunPtr (Ptr () -> IO ())

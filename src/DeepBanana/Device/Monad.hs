@@ -4,17 +4,13 @@ module DeepBanana.Device.Monad (
   , DeviceM(..)
   , unsafeIOToDevice
   , runDeviceM
-  , cudnnHandle
-  , cublasHandle
-  , deviceMallocArray
+  , onDevice
   ) where
 
 import Control.Concurrent (runInBoundThread)
 import Control.Monad.Primitive
-import qualified Foreign.CUDA.CuDNN as CuDNN
-import qualified Foreign.CUDA.Cublas as Cublas
+import Data.MemoTrie
 import qualified Foreign.CUDA as CUDA
-import System.IO.Unsafe (unsafePerformIO)
 
 import DeepBanana.Prelude
 
@@ -40,7 +36,7 @@ instance PrimMonad (DeviceM d) where
   type PrimState (DeviceM d) = RealWorld
   primitive action = DeviceM $ primitive action
 
-class Device (d :: k) where
+class Device d where
   deviceId :: Proxy d -> Int
 
 instance (KnownNat n) => Device n where
@@ -62,34 +58,8 @@ unsafeIOToDevice = DeviceM
 onDevice :: forall d a . Device d => Proxy d -> IO a -> IO a
 onDevice p action = runDeviceM p $ unsafeIOToDevice action
 
-global_cudnn_handle :: IORef (Maybe CuDNN.Handle)
-{-# NOINLINE global_cudnn_handle #-}
-global_cudnn_handle = unsafePerformIO $ newIORef Nothing
-
-cudnnHandle :: forall d . (Device d) => Proxy d -> CuDNN.Handle
-cudnnHandle p = unsafePerformIO $ onDevice p $ do
-  mh <- readIORef global_cudnn_handle
-  case mh of
-   Nothing -> do
-     h <- alloca $ \hptr -> CuDNN.createHandle hptr >> peek hptr
-     writeIORef global_cudnn_handle $ Just h
-     return h
-   Just h -> return h
-
-global_cublas_handle :: IORef (Maybe Cublas.Handle)
-{-# NOINLINE global_cublas_handle #-}
-global_cublas_handle = unsafePerformIO $ newIORef Nothing
-
-cublasHandle :: forall d . (Device d) => Proxy d -> Cublas.Handle
-cublasHandle p = unsafePerformIO $ onDevice p $ do
-  mh <- readIORef global_cublas_handle
-  case mh of
-   Nothing -> do
-     h <- Cublas.create
-     writeIORef global_cublas_handle $ Just h
-     return h
-   Just h -> return h
-
-deviceMallocArray :: forall d a . (Device d, Storable a)
-                  => Proxy d -> Int -> IO (CUDA.DevicePtr a)
-deviceMallocArray p size = onDevice p $ CUDA.mallocArray size
+instance forall t . HasTrie (Proxy t) where
+  newtype (Proxy t :->: a) = ProxyTrie a
+  trie f = ProxyTrie $ f (Proxy :: Proxy t)
+  untrie (ProxyTrie a) = \Proxy -> a
+  enumerate (ProxyTrie a) = [(Proxy :: Proxy t, a)]

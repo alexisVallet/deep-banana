@@ -5,9 +5,10 @@ module DeepBanana.Device.CuRAND where
 import Foreign
 import Foreign.C
 import Foreign.CUDA.Types
+import System.IO.Unsafe
 
 import DeepBanana.Device.Monad
-import DeepBanana.Prelude
+import DeepBanana.Prelude hiding (Handle)
 
 #include <curand.h>
 
@@ -19,16 +20,16 @@ newtype Status = Status {
 
 #{enum Status, Status
  , status_success = CURAND_STATUS_SUCCESS
- , status_version_mismatch = CURAND_STATUS_VERSDeviceM dN_MISMATCH
+ , status_version_mismatch = CURAND_STATUS_VERSION_MISMATCH
  , status_not_initialized = CURAND_STATUS_NOT_INITIALIZED
- , status_allocation_failed = CURAND_STATUS_ALLOCATDeviceM dN_FAILED
+ , status_allocation_failed = CURAND_STATUS_ALLOCATION_FAILED
  , status_type_error = CURAND_STATUS_TYPE_ERROR
  , status_out_of_range = CURAND_STATUS_OUT_OF_RANGE
  , status_length_not_multiple = CURAND_STATUS_LENGTH_NOT_MULTIPLE
- , status_double_precision_required = CURAND_STATUS_DOUBLE_PRECISDeviceM dN_REQUIRED
+ , status_double_precision_required = CURAND_STATUS_DOUBLE_PRECISION_REQUIRED
  , status_launch_failure = CURAND_STATUS_LAUNCH_FAILURE
  , status_preexisting_failure = CURAND_STATUS_PREEXISTING_FAILURE
- , status_initialization_failed = CURAND_STATUS_INITIALIZATDeviceM dN_FAILED
+ , status_initialization_failed = CURAND_STATUS_INITIALIZATION_FAILED
  , status_arch_mismatch = CURAND_STATUS_ARCH_MISMATCH
  , status_internal_error = CURAND_STATUS_INTERNAL_ERROR
  }
@@ -76,13 +77,13 @@ newtype DirectionVectors64 = DirectionVectors64 {
   }
 
 #{enum DirectionVectorSet, DirectionVectorSet
- , direction_vectors_32_joekuo6 = CURAND_DIRECTDeviceM dN_VECTORS_32_JOEKUO6
- , scrambled_direction_vectors_32_joekuo6 = CURAND_SCRAMBLED_DIRECTDeviceM dN_VECTORS_32_JOEKUO6
- , direction_vectors_64_joekuo6 = CURAND_DIRECTDeviceM dN_VECTORS_64_JOEKUO6
- , scrambled_direction_vectors_64_joekuo6 = CURAND_SCRAMBLED_DIRECTDeviceM dN_VECTORS_64_JOEKUO6
+ , direction_vectors_32_joekuo6 = CURAND_DIRECTION_VECTORS_32_JOEKUO6
+ , scrambled_direction_vectors_32_joekuo6 = CURAND_SCRAMBLED_DIRECTION_VECTORS_32_JOEKUO6
+ , direction_vectors_64_joekuo6 = CURAND_DIRECTION_VECTORS_64_JOEKUO6
+ , scrambled_direction_vectors_64_joekuo6 = CURAND_SCRAMBLED_DIRECTION_VECTORS_64_JOEKUO6
  }
 
-newtype Generator = Generator {
+newtype Generator d = Generator {
   unGenerator :: Ptr ()
   } deriving Storable
 
@@ -127,108 +128,107 @@ newtype Method = Method {
  , m2 = CURAND_M2
  , binary_search = CURAND_BINARY_SEARCH
  , discrete_gauss = CURAND_DISCRETE_GAUSS
- , rejection = CURAND_REJECTDeviceM dN
+ , rejection = CURAND_REJECTION
  , device_api = CURAND_DEVICE_API
- , fast_rejection = CURAND_FAST_REJECTDeviceM dN
+ , fast_rejection = CURAND_FAST_REJECTION
  , _3rd  = CURAND_3RD
- , definition = CURAND_DEFINITDeviceM dN
+ , definition = CURAND_DEFINITION
  , poisson = CURAND_POISSON
  }
 
 -- Random number generator manipulation functions.
-foreign import ccall unsafe "curandCreateGenerator"
-  createGenerator :: Ptr Generator -> RngType -> DeviceM d Status
+foreign import ccall safe "curandCreateGenerator"
+  createGenerator :: Ptr (Generator d) -> RngType -> DeviceM d Status
 
-foreign import ccall unsafe "curandCreateGeneratorHost"
-  createGeneratorHost :: Ptr Generator -> RngType -> DeviceM d Status
+foreign import ccall safe "curandCreateGeneratorHost"
+  createGeneratorHost :: Ptr (Generator d) -> RngType -> DeviceM d Status
 
-foreign import ccall unsafe "curandDestroyGenerator"
-  destroyGenerator :: Generator -> DeviceM d Status
+foreign import ccall safe "curandDestroyGenerator"
+  destroyGenerator :: Generator d -> DeviceM d Status
 
 -- Library version.
-foreign import ccall unsafe "curandGetVersion"
+foreign import ccall safe "curandGetVersion"
   getVersion :: Ptr CInt -> DeviceM d Status
 
 -- Set the CUDA stream.
-foreign import ccall unsafe "curandSetStream"
-  setStream :: Generator -> Stream -> DeviceM d Status
+foreign import ccall safe "curandSetStream"
+  setStream :: Generator d -> Stream -> DeviceM d Status
 
 -- Seeding.
-foreign import ccall unsafe "curandSetPseudoRandomGeneratorSeed"
-  setPseudoRandomGeneratorSeed :: Generator -> CULLong -> DeviceM d Status
+foreign import ccall safe "curandSetPseudoRandomGeneratorSeed"
+  setPseudoRandomGeneratorSeed :: Generator d -> CULLong -> DeviceM d Status
 
-foreign import ccall unsafe "curandSetGeneratorOffset"
-  setGeneratorOffset :: Generator -> CULLong -> DeviceM d Status
+foreign import ccall safe "curandSetGeneratorOffset"
+  setGeneratorOffset :: Generator d -> CULLong -> DeviceM d Status
 
 -- CuRANDOrdering.
-foreign import ccall unsafe "curandSetGeneratorOrdering"
-  setGeneratorOrdering :: Generator -> CuRANDOrdering -> DeviceM d Status
+foreign import ccall safe "curandSetGeneratorOrdering"
+  setGeneratorOrdering :: Generator d -> CuRANDOrdering -> DeviceM d Status
 
 -- Dimensions.
-foreign import ccall unsafe "curandSetQuasiRandomGeneratorDimensions"
-  setQuasiRandomGeneratorDimensions :: Generator -> CUInt -> DeviceM d Status
+foreign import ccall safe "curandSetQuasiRandomGeneratorDimensions"
+  setQuasiRandomGeneratorDimensions :: Generator d -> CUInt -> DeviceM d Status
 
 -- Random number generation.
-foreign import ccall unsafe "curandGenerate"
-  generate :: Generator -> DevicePtr CUInt -> CSize -> DeviceM d Status
+foreign import ccall safe "curandGenerate"
+  generate :: Generator d -> DevicePtr CUInt -> CSize -> DeviceM d Status
 
-foreign import ccall unsafe "curandGenerateLongLong"
-  generateLongLong :: Generator -> DevicePtr CULLong -> CSize -> DeviceM d Status
+foreign import ccall safe "curandGenerateLongLong"
+  generateLongLong :: Generator d -> DevicePtr CULLong -> CSize -> DeviceM d Status
 
 -- Uniform distribution.
-foreign import ccall unsafe "curandGenerateUniform"
-  generateUniform :: Generator -> DevicePtr CFloat -> CSize -> DeviceM d Status
+foreign import ccall safe "curandGenerateUniform"
+  generateUniform :: Generator d -> DevicePtr CFloat -> CSize -> DeviceM d Status
 
-foreign import ccall unsafe "curandGenerateUniformDouble"
-  generateUniformDouble :: Generator -> DevicePtr CDouble -> CSize -> DeviceM d Status
+foreign import ccall safe "curandGenerateUniformDouble"
+  generateUniformDouble :: Generator d -> DevicePtr CDouble -> CSize -> DeviceM d Status
 
 -- Normal distribution.
-foreign import ccall unsafe "curandGenerateNormal"
-  generateNormal :: Generator -> DevicePtr CFloat -> CSize -> CFloat -> CFloat
+foreign import ccall safe "curandGenerateNormal"
+  generateNormal :: Generator d -> DevicePtr CFloat -> CSize -> CFloat -> CFloat
                  -> DeviceM d Status
 
-foreign import ccall unsafe "curandGenerateNormalDouble"
-  generateNormalDouble :: Generator -> DevicePtr CDouble -> CSize -> CDouble -> CDouble
+foreign import ccall safe "curandGenerateNormalDouble"
+  generateNormalDouble :: Generator d -> DevicePtr CDouble -> CSize -> CDouble -> CDouble
                        -> DeviceM d Status
 
 -- Log-normal distribution.
-foreign import ccall unsafe "curandGenerateLogNormal"
-  generateLogNormal :: Generator -> DevicePtr CFloat -> CSize -> CFloat -> CFloat
+foreign import ccall safe "curandGenerateLogNormal"
+  generateLogNormal :: Generator d -> DevicePtr CFloat -> CSize -> CFloat -> CFloat
                     -> DeviceM d Status
 
-foreign import ccall unsafe "curandGenerateLogNormalDouble"
-  generateLogNormalDouble :: Generator -> DevicePtr CDouble -> CSize -> CDouble
+foreign import ccall safe "curandGenerateLogNormalDouble"
+  generateLogNormalDouble :: Generator d -> DevicePtr CDouble -> CSize -> CDouble
                           -> CDouble -> DeviceM d Status
 
 -- Poisson distribution.
-foreign import ccall unsafe "curandCreatePoissonDistribution"
+foreign import ccall safe "curandCreatePoissonDistribution"
   createPoissonDistribution :: CDouble -> Ptr DiscreteDistribution -> DeviceM d Status
 
-foreign import ccall unsafe "curandDestroyDistribution"
+foreign import ccall safe "curandDestroyDistribution"
   destroyDistribution :: DiscreteDistribution -> DeviceM d Status
 
-foreign import ccall unsafe "curandGeneratePoisson"
-  generatePoisson :: Generator -> DevicePtr CUInt -> CSize -> CDouble -> DeviceM d Status
+foreign import ccall safe "curandGeneratePoisson"
+  generatePoisson :: Generator d -> DevicePtr CUInt -> CSize -> CDouble -> DeviceM d Status
 
-foreign import ccall unsafe "curandGeneratePoissonMethod"
-  generatePoissonMethod :: Generator -> DevicePtr CUInt -> CSize -> CDouble
+foreign import ccall safe "curandGeneratePoissonMethod"
+  generatePoissonMethod :: Generator d -> DevicePtr CUInt -> CSize -> CDouble
                         -> DeviceM d Status
 
 -- Setting up starting states.
-foreign import ccall unsafe "curandGenerateSeeds"
-  generateSeeds :: Generator -> DeviceM d Status
+foreign import ccall safe "curandGenerateSeeds"
+  generateSeeds :: Generator d -> DeviceM d Status
 
-foreign import ccall unsafe "curandGetDirectionVectors32"
+foreign import ccall safe "curandGetDirectionVectors32"
   getDirectionVectors32 :: Ptr (Ptr DirectionVectors32) -> DirectionVectorSet
                         -> DeviceM d Status
 
-foreign import ccall unsafe "curandGetScrambleConstants32"
+foreign import ccall safe "curandGetScrambleConstants32"
   getScrambleConstants32 :: Ptr (Ptr CUInt) -> DeviceM d Status
 
-foreign import ccall unsafe "curandGetDirectionVectors64"
+foreign import ccall safe "curandGetDirectionVectors64"
   getDirectionVectors64 :: Ptr (Ptr DirectionVectors64) -> DirectionVectors64
                         -> DeviceM d Status
 
-foreign import ccall unsafe "curandGetScrambleConstants64"
+foreign import ccall safe "curandGetScrambleConstants64"
   getScrambleConstants64 :: Ptr (Ptr CULLong) -> DeviceM d Status
-

@@ -12,6 +12,8 @@ module DeepBanana.Tensor (
   , dtype
   , reshape
   , reshape'
+  , transfer
+  , transfer'
   , broadcast
   , broadcast'
   , zeros
@@ -41,12 +43,11 @@ module DeepBanana.Tensor (
 import Data.Serialize (Serialize)
 import qualified Data.Vector.Storable as SV
 import qualified Data.Vector.Storable.Mutable as SMV
-import qualified Foreign.CUDA.CuDNN as CuDNN
-import qualified Foreign.CUDA.Cublas as CuBlas
 import System.IO.Unsafe
 import Unsafe.Coerce
 
 import DeepBanana.Device
+import qualified DeepBanana.Device.CuDNN as CuDNN
 import qualified DeepBanana.Device.CUDA as CUDA
 import DeepBanana.Exception
 import DeepBanana.Prelude
@@ -100,6 +101,19 @@ reshape' :: forall d n1 n2 a
          => Dim n2 -> Tensor d n1 a -> Tensor d n2 a
 reshape' newshp t =
   unsafeRunExcept (reshape newshp t :: Either IncompatibleSize (Tensor d n2 a))
+
+transfer :: (MonadError t m, Variant t OutOfMemory, Shape (Dim n),
+             Device d1, Device d2, TensorScalar a)
+         => Tensor d1 n a -> m (Tensor d2 n a)
+transfer t = embedExcept $ runST $ runExceptT $ do
+  mt <- unsafeThaw t
+  mt' <- MT.copy mt
+  unsafeFreeze mt'
+
+transfer' :: forall n d1 d2 a
+          . (Shape (Dim n), Device d1, Device d2, TensorScalar a)
+          => Tensor d1 n a -> Tensor d2 n a
+transfer' t = unsafeRunExcept (transfer t :: Either OutOfMemory (Tensor d2 n a))
 
 -- | Returns the CuDNN datatype of a tensor.
 dtype :: forall d n a . (TensorScalar a) => Tensor d n a -> CuDNN.DataType

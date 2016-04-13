@@ -31,7 +31,6 @@ module DeepBanana.Tensor.Mutable (
   ) where
 
 import Control.Monad.Primitive (unsafePrimToPrim)
-import qualified Foreign.CUDA.CuDNN as CuDNN
 import Foreign.ForeignPtr
 import Foreign.Marshal
 import System.IO.Unsafe
@@ -41,6 +40,7 @@ import Unsafe.Coerce
 import DeepBanana.Device
 import DeepBanana.Device.Cubits (freeDevicePtr)
 import qualified DeepBanana.Device.CUDA as CUDA
+import qualified DeepBanana.Device.CuDNN as CuDNN
 import DeepBanana.Exception
 import DeepBanana.Prelude
 import DeepBanana.Tensor.Exception
@@ -160,8 +160,9 @@ copy tensor = do
   return out
 
 -- | Thresholds a mutable tensor in place. Used to implement dropout.
-threshInplace :: forall m d n . (PrimMonad m, Device d, Shape (Dim n))
-              => MTensor (PrimState m) d n CFloat -> CFloat -> m ()
+threshInplace :: forall m d n a
+              . (PrimMonad m, Device d, Shape (Dim n), TensorScalar a)
+              => MTensor (PrimState m) d n a -> a -> m ()
 threshInplace tensor threshold =
   unsafePrimToPrim $ do
     withDevicePtr (unsafeCoerce tensor :: IOTensor d n a) $ \tensorptr -> do
