@@ -29,7 +29,7 @@ import DeepBanana.Tensor
 import DeepBanana.Tensor.Exception
 
 -- Performs XY^T via 1x1 convolution.
-dot :: (MonadCuda d m, Device d, TensorScalar a)
+dot :: (MonadCuda m, Device d, TensorScalar a)
     => Layer m a '[] (Tensor d 2 a, Tensor d 2 a) (Tensor d 2 a)
 dot = Layer $ \_ (x,y) -> do
   let rx:.cx:.Z = shape x
@@ -46,14 +46,14 @@ dot = Layer $ \_ (x,y) -> do
                           in (W Z, (reshape' (rx:.cx:.Z) xgrad,
                                     reshape' (cy:.cx':.Z) ygrad)))
 
-linear :: (MonadCuda d m, Device d, TensorScalar a)
+linear :: (MonadCuda m, Device d, TensorScalar a)
        => Layer m a '[Tensor d 2 a] (Tensor d 2 a) (Tensor d 2 a)
 linear = Layer $ \(W (y:.Z)) x -> do
   (xy, bwdxy) <- forwardBackward dot (W Z) (x,y)
   return (xy, \xygrad -> let (_, (xgrad,ygrad)) = bwdxy xygrad
                          in (W $ ygrad:.Z, xgrad))
 
-sumRows :: (MonadCuda d m, Device d, TensorScalar a)
+sumRows :: (MonadCuda m, Device d, TensorScalar a)
         => Layer m a '[] (Tensor d 2 a) (Tensor d 1 a)
 sumRows = Layer $ \_ x -> do
   let rows:.cols:.Z = shape x
@@ -64,7 +64,7 @@ sumRows = Layer $ \_ x -> do
                             (_, (xgrad,_)) = bwdy ygrad'
                         in (W Z, xgrad))
 
-replicateAsCols :: (MonadCuda d m, Device d, TensorScalar a)
+replicateAsCols :: (MonadCuda m, Device d, TensorScalar a)
                 => Int -> Layer m a '[] (Tensor d 1 a) (Tensor d 2 a)
 replicateAsCols cols = Layer $ \_ x -> do
   let rows:.Z = shape x
@@ -74,13 +74,13 @@ replicateAsCols cols = Layer $ \_ x -> do
   return (y, \ygrad -> let (_,(xgrad,_)) = bwdy ygrad
                        in (W Z, reshape' (rows:.Z) xgrad))
 
-lreshape :: (MonadCuda d m, TensorScalar a, Shape (Dim n), Shape (Dim k))
+lreshape :: (MonadCuda m, TensorScalar a, Shape (Dim n), Shape (Dim k))
          => Dim k -> Layer m a '[] (Tensor d n a) (Tensor d k a)
 lreshape newshp = combinePasses' fwdmul bwdmul
   where fwdmul x = reshape newshp x
         bwdmul x _ = return $ \upgrad -> reshape' (shape x) upgrad
 
-toScalar :: (MonadCuda d m, TensorScalar a, Device d, Shape (Dim n))
+toScalar :: (MonadCuda m, TensorScalar a, Device d, Shape (Dim n))
          => Layer m a '[] (Tensor d n a) a
 toScalar = noWeights $ fwdBwdToScalar
   where fwdBwdToScalar x = do
@@ -89,7 +89,7 @@ toScalar = noWeights $ fwdBwdToScalar
           return (unsafeHead $ tensorToList x,
                   \upgrad -> tensorFromList' (shape x) [upgrad])
 
-mlrCost :: (MonadCuda d m, Device d, TensorScalar a)
+mlrCost :: (MonadCuda m, Device d, TensorScalar a)
         => Dim 2 -> Layer m a '[] (Tensor d 2 a, Tensor d 2 a) (Tensor d 1 a)
 mlrCost s@(n:.m:.Z) =
   id' *** (add -< 10E-5 >+> softmax softmax_accurate softmax_mode_instance)

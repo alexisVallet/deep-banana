@@ -5,12 +5,13 @@ module DeepBanana.Layer.CUDA.CuRAND (
   , logNormal
   , dropout
   ) where
-
+import Debug.Trace
 import Foreign.Marshal
 import System.IO.Unsafe
 import Unsafe.Coerce
 
 import DeepBanana.Device
+import qualified DeepBanana.Device.Monad as DeviceM
 import qualified DeepBanana.Device.CuRAND as CuRAND
 import DeepBanana.Exception
 import DeepBanana.Layer
@@ -20,84 +21,64 @@ import DeepBanana.Tensor
 import DeepBanana.Tensor.Exception
 import qualified DeepBanana.Tensor.Mutable as MT
 
-uniform :: (MonadCuda d m, Device d, TensorScalar a, Shape (Dim n))
+uniform :: forall m n d a
+        . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
         => Dim n -> m (Tensor d n a)
-uniform shp = embedCudaFromST $ do
-  res <- MT.emptyTensor shp
+uniform shp = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
-  mgen <- unsafeThawGen gen
-  uniformM mgen res
-  unsafeFreezeGen mgen >>= put
-  unsafeFreeze res
+  let outSize = size shp
+  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d n a)  
+  liftIO $ MT.withDevicePtr res $ \resptr -> do
+    runDeviceM (Proxy :: Proxy d)
+      $ withGenerator gen $ \rawGen -> do
+      generateUniform rawGen resptr (fromIntegral outSize)
+  modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
+  unsafeFreeze res >>= return . unsafeCoerce
 
-normal :: (MonadCuda d m, Device d, TensorScalar a, Shape (Dim n))
+normal :: forall m d n a
+       . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
        => Dim n -> a -> a -> m (Tensor d n a)
-normal shp mean std = embedCudaFromST $ do
-  res <- MT.emptyTensor shp
+normal shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
-  mgen <- unsafeThawGen gen
-  normalM mgen res mean std
-  unsafeFreezeGen mgen >>= put
-  unsafeFreeze res
+  let outSize = size shp
+  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d n a)  
+  liftIO $ MT.withDevicePtr res $ \resptr -> do
+    runDeviceM (Proxy :: Proxy d)
+      $ withGenerator gen $ \rawGen -> do
+      generateNormal rawGen resptr (fromIntegral outSize) mean std
+  modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
+  unsafeFreeze res >>= return . unsafeCoerce
 
-logNormal :: (MonadCuda d m, Device d, TensorScalar a, Shape (Dim n))
-          => Dim n -> a -> a -> m (Tensor d n a)
-logNormal shp mean std = embedCudaFromST $ do
-  res <- MT.emptyTensor shp
+logNormal :: forall m d n a
+       . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
+       => Dim n -> a -> a -> m (Tensor d n a)
+logNormal shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
-  mgen <- unsafeThawGen gen
-  logNormalM mgen res mean std
-  unsafeFreezeGen mgen >>= put
-  unsafeFreeze res  
+  let outSize = size shp
+  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d n a)  
+  liftIO $ MT.withDevicePtr res $ \resptr -> do
+    runDeviceM (Proxy :: Proxy d)
+      $ withGenerator gen $ \rawGen -> do
+      generateLogNormal rawGen resptr (fromIntegral outSize) mean std
+  modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
+  unsafeFreeze res >>= return . unsafeCoerce
 
 -- dropout
-dropout :: (MonadCuda d m, Device d, TensorScalar a, Shape (Dim n))
+dropout :: forall m d n a
+        . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
         => a
         -> Layer m a '[] (Tensor d n a) (Tensor d n a)
 dropout drop_proba = Layer $ \_ x -> embedCudaFromST $ do
-  rand <- MT.emptyTensor $ shape x
-  gen <- get
-  mgen <- unsafeThawGen gen
-  uniformM mgen rand
-  MT.threshInplace rand drop_proba
-  unsafeFreezeGen mgen >>= put
-  mask <- unsafeFreeze rand
-  return (x * mask, \upgrad -> (W Z, upgrad * mask))
-
-uniformM :: forall m n d a
-         . (PrimMonad m, Shape (Dim n), Device d, TensorScalar a)
-         => MGenerator (PrimState m) d
-         -> MT.MTensor (PrimState m) d n a
-         -> m ()
-uniformM gen t = unsafeIOToPrim $ do
-  withRawGen (unsafeCoerce gen :: MGenerator RealWorld d) $ \rawGen -> do
-    MT.withDevicePtr (unsafeCoerce t :: MT.IOTensor d n a) $ \tptr -> do
-      runDeviceM (Proxy :: Proxy d)
-        $ generateUniform rawGen tptr (fromIntegral $ size $ MT.shape t)
-      return ()
-
-normalM :: forall m n d a
-        . (PrimMonad m, Shape (Dim n), Device d, TensorScalar a)
-        => MGenerator (PrimState m) d
-        -> MT.MTensor (PrimState m) d n a
-        -> a
-        -> a
-        -> m ()
-normalM gen t mean std = unsafeIOToPrim $ withRawGen (unsafeCoerce gen :: MGenerator RealWorld d) $ \rawGen -> do
-  MT.withDevicePtr (unsafeCoerce t :: MT.IOTensor d n a) $ \tptr -> do
-    runDeviceM (Proxy :: Proxy d)
-      $ generateNormal rawGen tptr (fromIntegral $ size $ MT.shape t) mean std
-    return ()
-
-logNormalM :: forall m n d a
-           . (PrimMonad m, Shape (Dim n), Device d, TensorScalar a)
-           => MGenerator (PrimState m) d
-           -> MT.MTensor (PrimState m) d n a
-           -> a
-           -> a
-           -> m ()
-logNormalM gen t mean std = unsafeIOToPrim $ withRawGen (unsafeCoerce gen :: MGenerator RealWorld d) $ \rawGen -> do
-  MT.withDevicePtr (unsafeCoerce t :: MT.IOTensor d n a) $ \tptr -> do
-    runDeviceM (Proxy :: Proxy d)
-      $ generateLogNormal rawGen tptr (fromIntegral $ size $ MT.shape t) mean std
-    return ()
+  let outSize = size $ shape x
+  mask <- embedCuda unsafeIOToPrim $ do
+    mmask <- MT.emptyTensor $ shape x :: CudaT IO (MT.IOTensor d n a)
+    gen <- get
+    liftIO $ do
+      MT.withDevicePtr mmask $ \maskptr -> do
+        runDeviceM (Proxy :: Proxy d) $ do
+          withGenerator gen $ \rawGen -> do
+            generateUniform rawGen maskptr (fromIntegral outSize)
+      MT.threshInplace mmask drop_proba
+    unsafeFreeze mmask >>= return . unsafeCoerce
+  modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
+  return (x * mask, broadcast' (shape x) >>> \upgrad -> (W Z, upgrad * mask))

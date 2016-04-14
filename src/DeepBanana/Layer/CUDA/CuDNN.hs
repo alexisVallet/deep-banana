@@ -45,7 +45,7 @@ import DeepBanana.Tensor.Exception
 import qualified DeepBanana.Tensor.Mutable as MT
 import DeepBanana.Tensor.Mutable (MTensor, IOTensor, withDevicePtr, emptyTensor)
 
-convolution2d :: forall d m a . (Device d, MonadCuda d m, TensorScalar a)
+convolution2d :: forall d m a . (Device d, MonadCuda m, TensorScalar a)
               => (Int,Int)
               -> (Int,Int)
               -> CuDNN.ConvolutionFwdAlgo
@@ -76,7 +76,7 @@ convolution2d padding stride algo =
           return $ broadcast' (shape out)
             >>> \upgrad -> (W $ bwdfilters upgrad :. Z, bwdinputs upgrad)
 
-bias :: forall m d a . (Device d, MonadCuda d m, TensorScalar a)
+bias :: forall m d a . (Device d, MonadCuda m, TensorScalar a)
      => Layer m a '[Tensor d 1 a] (Tensor d 4 a) (Tensor d 4 a)
 bias = combinePasses biasFwd biasBwd
   where biasFwd (W ((:.) bias_w Z)) batch = embedCudaFromST $ do
@@ -96,7 +96,7 @@ bias = combinePasses biasFwd biasBwd
                                  unsafeFreeze grad
                            in (W ((:.) biasgrad Z), upgrad)
 
-activation :: forall m d a n . (Device d, MonadCuda d m, TensorScalar a, Shape (Dim n))
+activation :: forall m d a n . (Device d, MonadCuda m, TensorScalar a, Shape (Dim n))
            => CuDNN.ActivationMode
            -> Layer m a '[] (Tensor d n a) (Tensor d n a)
 activation mode =
@@ -117,7 +117,7 @@ activation mode =
               fmap (reshape' (shape inp)) $ unsafeFreeze grad
 
 -- pooling
-pooling2d :: forall m d a . (Device d, MonadCuda d m, TensorScalar a)
+pooling2d :: forall m d a . (Device d, MonadCuda m, TensorScalar a)
           => (Int,Int)
           -> (Int,Int)
           -> (Int,Int)
@@ -139,7 +139,7 @@ pooling2d psize padding stride mode =
               grad <- pooling2dBwd CuDNN.handle psize padding stride mode inp' out' upgrad'
               unsafeFreeze grad
 
-softmax :: forall m d a . (Device d, MonadCuda d m, TensorScalar a)
+softmax :: forall m d a . (Device d, MonadCuda m, TensorScalar a)
         => CuDNN.SoftmaxAlgorithm
         -> CuDNN.SoftmaxMode
         -> Layer m a '[] (Tensor d 2 a) (Tensor d 2 a)
@@ -158,7 +158,7 @@ softmax algorithm mode = combinePasses' softmaxFwd softmaxBwd
               mgrad <- softmaxBackward CuDNN.handle algorithm mode mout mu
               unsafeFreeze mgrad >>= reshape (rows:.cols:.Z)
 
-nchw_to_nhwc :: forall d m a . (Device d, MonadCuda d m, TensorScalar a)
+nchw_to_nhwc :: forall d m a . (Device d, MonadCuda m, TensorScalar a)
              => Layer m a '[] (Tensor d 4 a) (Tensor d 4 a)
 nchw_to_nhwc = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
@@ -173,7 +173,7 @@ nchw_to_nhwc = combinePasses' fwdTrans bwdTrans
               mu' <- nhwc_to_nchw' CuDNN.handle mu
               unsafeFreeze mu'
 
-nhwc_to_nchw :: forall d m a . (Device d, MonadCuda d m, TensorScalar a)
+nhwc_to_nchw :: forall d m a . (Device d, MonadCuda m, TensorScalar a)
              => Layer m a '[] (Tensor d 4 a) (Tensor d 4 a)
 nhwc_to_nchw = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do

@@ -1,18 +1,14 @@
 {-# LANGUAGE UndecidableInstances, GADTs #-}
 module Test.DeepBanana.Layer.NumericGrad where
 
-import Prelude hiding ((.), id)
 import Foreign.C
-import Control.Monad
-import Control.Monad.Trans
-import Data.VectorSpace
-import GHC.TypeLits
-import Data.Proxy
+import Prelude ((!!), head)
 import Unsafe.Coerce
 import Test.Hspec
 
 import Config
 import DeepBanana
+import DeepBanana.Prelude hiding (head)
 
 allClose :: (TensorScalar a, Device d, Ord a, Shape (Dim n))
          => Tensor d n a -> Tensor d n a -> Bool

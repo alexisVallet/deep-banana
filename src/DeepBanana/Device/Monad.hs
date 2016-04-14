@@ -1,4 +1,4 @@
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableInstances, BangPatterns, OverloadedStrings #-}
 module DeepBanana.Device.Monad (
     Device(..)
   , DeviceM(..)
@@ -10,6 +10,7 @@ module DeepBanana.Device.Monad (
 import Control.Concurrent (runInBoundThread)
 import Control.Monad.Primitive
 import Data.MemoTrie
+import Debug.Trace
 import qualified Foreign.CUDA as CUDA
 
 import DeepBanana.Prelude
@@ -43,14 +44,16 @@ instance (KnownNat n) => Device n where
   deviceId p = fromIntegral $ natVal p
 
 runDeviceM :: forall d a . (Device d) => Proxy d -> DeviceM d a -> IO a
-runDeviceM p action =
+runDeviceM p action = do
   runInBoundThread $ bracket
-  (do
-      prevDevice <- CUDA.get
-      CUDA.set $ deviceId p
-      return prevDevice)
-  (\prevDevice -> CUDA.set prevDevice)
-  (\_ -> unsafeRunDeviceM action)
+    (do
+        prevDevice <- CUDA.get
+        CUDA.set $ deviceId p
+        return prevDevice)
+    (\prevDevice -> do
+        CUDA.set prevDevice)
+    (\_ -> do
+        unsafeRunDeviceM action)
 
 unsafeIOToDevice :: IO a -> DeviceM d a
 unsafeIOToDevice = DeviceM

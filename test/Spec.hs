@@ -7,6 +7,8 @@ import Test.DeepBanana.Layer.Numeric
 import Test.DeepBanana.Layer.Recurrent
 import Test.DeepBanana.Tensor
 
+import DeepBanana.Prelude
+
 main :: IO ()
 main = do
   CUDA.set 2

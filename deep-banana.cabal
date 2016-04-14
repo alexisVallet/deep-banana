@@ -107,6 +107,7 @@ test-suite deep-banana-test
                      , PolyKinds
                      , FlexibleContexts
                      , FlexibleInstances
+                     , NoImplicitPrelude
 
 executable example-mnist
   hs-source-dirs:      examples/mnist/

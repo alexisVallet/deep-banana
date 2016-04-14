@@ -1,10 +1,10 @@
 module Test.DeepBanana.Tensor where
 
 import Test.Hspec
-import DeepBanana.Prelude
 import System.IO.Unsafe
 
 import DeepBanana
+import DeepBanana.Prelude
 
 import Config
 

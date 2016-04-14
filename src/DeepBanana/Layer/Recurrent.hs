@@ -189,6 +189,6 @@ lzip = combinePasses' fwdZip bwdZip
   where fwdZip (xs,ys) = return $ zip xs ys
         bwdZip _ _ = return unzip
 
-recMlrCost :: (MonadCuda d m, Device d, TensorScalar a)
+recMlrCost :: (MonadCuda m, Device d, TensorScalar a)
            => Dim 2 -> Layer m a '[] ([Tensor d 2 a], [Tensor d 2 a]) (Tensor d 1 a)
 recMlrCost s = lzip >+> cmap (mlrCost s) >+> lmean
