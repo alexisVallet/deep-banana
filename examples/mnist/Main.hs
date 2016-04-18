@@ -35,6 +35,10 @@ main = do
       test_labels_file = mnist_dir </> "test-labels.ubyte.gz"
       nb_labels = 10
       batch_size = 128
+      batch_shape = batch_size:.1:.28:.28:.Z :: Dim 4
+      labels_shape = batch_size:.nb_labels:.Z :: Dim 2
+      dev1 = Proxy :: Proxy 1
+      dev2 = Proxy :: Proxy 2
   putStrLn "Loading training set..."
   emnist_train <- runExceptT $ P.toListM
                   $ load_mnist (Just train_images_url) (Just train_labels_url)
@@ -53,20 +57,17 @@ main = do
        w_0 <- init_weights nb_labels :: CudaT IO (Weights CFloat (MNISTWeights 1))
        let
          nb_val_batches = length mnist_val `div` batch_size
-         preprocessing :: Pipe (Grey, Int) (Tensor 1 4 CFloat, Tensor 1 2 CFloat) (CudaT IO) ()
+         preprocessing :: Pipe
+                          (Grey, Int)
+                          (SVector CFloat, SVector CFloat)
+                          (CudaT IO) ()
          preprocessing =
            P.map (\(i,l) -> (i, [l]))
            >-> batch_images nb_labels batch_size
            >-> P.map (\(b,l) -> (VS.map grey_to_float b, l))
-           >-> batch_to_gpu (batch_size:.1:.28:.28:.Z) (batch_size:.nb_labels:.Z)
-         splitBatches = forever $ do
-           (b1,l1) <- await
-           (b2,l2) <- await
-           b2' <- transfer b2
-           l2' <- transfer l2
-           yield ((l1,b1),(l2',b2'))
          validate (c,w) = do
-           let sampleAccuracy = forever $ do
+           let sampleAccuracy :: Pipe (Tensor 1 4 CFloat, Tensor 1 2 CFloat) ([Int],[Int]) (CudaT IO) ()
+               sampleAccuracy = forever $ do
                  (b,l) <- await
                  confmat <- lift $ predict batch_size nb_labels w b
                  let rows:.cols:.Z = shape confmat
@@ -80,6 +81,7 @@ main = do
                    yield ([predl],[gtl])
            valAccuracy <- accuracy $ randomize mnist_val
                           >-> preprocessing
+                          >-> batch_to_gpu dev1 batch_shape labels_shape
                           >-> sampleAccuracy
            putStrLn $ "Validation accuracy: " ++ pack (show valAccuracy)
          optimize =
@@ -91,7 +93,7 @@ main = do
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
-         >-> splitBatches
+         >-> batch_to_multi_gpus dev1 dev2 batch_shape labels_shape
          >-> optimize
          >-> runEvery 1000 validate
          >-> print_info
@@ -143,15 +145,15 @@ nnet _ batch_size nb_labels =
 
 cost_grad :: (Device d1, Device d2) => Proxy d1 -> Proxy d2 -> Int -> Int
           -> Weights CFloat (MNISTWeights d1)
-          -> ((Tensor d1 2 CFloat, Tensor d1 4 CFloat),
-              (Tensor d2 2 CFloat, Tensor d2 4 CFloat))
+          -> ((Tensor d1 4 CFloat, Tensor d1 2 CFloat),
+              (Tensor d2 4 CFloat, Tensor d2 2 CFloat))
           -> CudaT IO (CFloat, Weights CFloat (MNISTWeights d1))
-cost_grad p1 p2 batch_size nb_labels w_t b = do
+cost_grad p1 p2 batch_size nb_labels w_t ((b1,l1),(b2,l2)) = do
   let net1 = nnet p1 batch_size nb_labels 
       net2 = nnet p2 batch_size nb_labels
       fullNet = (dataPar p1 net1 net2) >+> add >+> scale -< 0.5 
   (cost, bwd) <- cudaToTraining
-                 $ forwardBackward fullNet w_t b
+                 $ forwardBackward fullNet w_t ((l1,b1),(l2,b2))
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
 

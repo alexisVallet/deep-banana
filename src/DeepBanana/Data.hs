@@ -9,6 +9,7 @@ module DeepBanana.Data (
   , batch_images
   , batch_images_pad_labels
   , batch_to_gpu
+  , batch_to_multi_gpus
   , batch_labels_to_gpu
   , runEvery
   , serializeTo
@@ -224,15 +225,36 @@ batch_images_pad_labels nb_labels batch_size pad_label = do
 
 batch_to_gpu :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
                  Variant t IncompatibleSize, TensorScalar a,
-                 Shape (Dim n1), Shape (Dim n2), Device d1, Device d2)
-             => Dim n1
+                 Shape (Dim n1), Shape (Dim n2), Device d)
+             => Proxy d
+             -> Dim n1
              -> Dim n2
-             -> Pipe (SVector a, SVector a) (Tensor d1 n1 a, Tensor d2 n2 a) m ()
-batch_to_gpu shp1 shp2 = forever $ do
+             -> Pipe (SVector a, SVector a) (Tensor d n1 a, Tensor d n2 a) m ()
+batch_to_gpu p shp1 shp2 = forever $ do
   (batch, labels) <- await
   tbatch <- fromVector shp1 batch
   tlabels <- fromVector shp2 labels
   yield (tbatch, tlabels)
+
+batch_to_multi_gpus :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
+                        Variant t IncompatibleSize, TensorScalar a,
+                        Shape (Dim n1), Shape (Dim n2), Device d1, Device d2)
+                    => Proxy d1
+                    -> Proxy d2
+                    -> Dim n1
+                    -> Dim n2
+                    -> Pipe (SVector a, SVector a)
+                            ((Tensor d1 n1 a, Tensor d1 n2 a),
+                             (Tensor d2 n1 a, Tensor d2 n2 a)) m ()
+batch_to_multi_gpus p1 p2 shp1 shp2 = forever $ do
+  (b1, l1) <- await
+  (b2, l2) <- await
+  tb1 <- fromVector shp1 b1
+  tb2 <- fromVector shp1 b2
+  tl1 <- fromVector shp2 l1
+  tl2 <- fromVector shp2 l2
+  yield ((tb1,tl1),(tb2,tl2))
+
 
 batch_labels_to_gpu :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
                         Variant t IncompatibleSize, TensorScalar a,
