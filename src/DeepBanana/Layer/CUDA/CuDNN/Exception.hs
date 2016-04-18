@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, DeriveGeneric #-}
 module DeepBanana.Layer.CUDA.CuDNN.Exception (
     BadParam
   , badParam
@@ -37,61 +37,61 @@ statusToStackString status =
   withStack $ unsafePerformIO $ CuDNN.getErrorString status >>= peekCString
 
 newtype BadParam = BadParam (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 badParam :: (?loc :: CallStack) => BadParam
 badParam = BadParam $ statusToStackString CuDNN.bad_param
 
 newtype NotInitialized = NotInitialized (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 notInitialized :: (?loc :: CallStack) => NotInitialized
 notInitialized = NotInitialized $ statusToStackString CuDNN.not_initialized
 
 newtype AllocFailed = AllocFailed (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 allocFailed :: (?loc :: CallStack) => AllocFailed
 allocFailed = AllocFailed $ statusToStackString CuDNN.alloc_failed
 
 newtype InternalError = InternalError (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 internalError :: (?loc :: CallStack) => InternalError
 internalError = InternalError $ statusToStackString CuDNN.internal_error
 
 newtype InvalidValue = InvalidValue (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 invalidValue :: (?loc :: CallStack) => InvalidValue
 invalidValue = InvalidValue $ statusToStackString CuDNN.invalid_value
 
 newtype ArchMismatch = ArchMismatch (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 archMismatch :: (?loc :: CallStack) => ArchMismatch
 archMismatch = ArchMismatch $ statusToStackString CuDNN.arch_mismatch
 
 newtype MappingError = MappingError (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 mappingError :: (?loc :: CallStack) => MappingError
 mappingError = MappingError $ statusToStackString CuDNN.mapping_error
 
 newtype ExecutionFailed = ExecutionFailed (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 executionFailed :: (?loc :: CallStack) => ExecutionFailed
 executionFailed = ExecutionFailed $ statusToStackString CuDNN.execution_failed
 
 newtype NotSupported = NotSupported (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 notSupported :: (?loc :: CallStack) => NotSupported
 notSupported = NotSupported $ statusToStackString CuDNN.not_supported
 
 newtype LicenseError = LicenseError (WithStack String)
-                      deriving (Eq, Show, Typeable, Exception)
+                      deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 licenseError :: (?loc :: CallStack) => LicenseError
 licenseError = LicenseError $ statusToStackString CuDNN.license_error

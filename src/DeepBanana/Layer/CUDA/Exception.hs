@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, StandaloneDeriving, ImplicitParams, InstanceSigs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, StandaloneDeriving, ImplicitParams, InstanceSigs, DeriveGeneric #-}
 module DeepBanana.Layer.CUDA.Exception (
     handleCUDAException
   , CUDAException
@@ -17,6 +17,8 @@ class (Eq e, Exception e) => CUDAException e where
 
 -- Mysteriously missing from the CUDA package
 deriving instance Eq CUDA.CUDAException
+deriving instance Generic CUDA.Status
+instance NFData CUDA.Status
 
 handleCUDAException :: forall m t e a
                     . (MonadIO m, MonadError t m, Variant t e, CUDAException e)
@@ -28,7 +30,7 @@ handleCUDAException p action = do
   embedExcept eres
 
 newtype MemoryAllocation = MemoryAllocation (WithStack CUDA.Status)
-                           deriving (Eq, Show, Typeable, Exception)
+                           deriving (Eq, Show, Typeable, Exception, Generic, NFData)
 
 instance CUDAException MemoryAllocation where
   cudaException _ = CUDA.ExitCode CUDA.MemoryAllocation

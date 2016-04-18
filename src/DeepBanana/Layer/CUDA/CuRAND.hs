@@ -1,6 +1,7 @@
 {-# LANGUAGE TypeFamilies, OverloadedStrings #-}
 module DeepBanana.Layer.CUDA.CuRAND (
-    uniform
+    splitGenerator
+  , uniform
   , normal
   , logNormal
   , dropout
@@ -12,6 +13,7 @@ import Unsafe.Coerce
 
 import DeepBanana.Device
 import qualified DeepBanana.Device.Monad as DeviceM
+import qualified DeepBanana.Device.CUDA as CUDA
 import qualified DeepBanana.Device.CuRAND as CuRAND
 import DeepBanana.Exception
 import DeepBanana.Layer
@@ -20,6 +22,20 @@ import DeepBanana.Prelude
 import DeepBanana.Tensor
 import DeepBanana.Tensor.Exception
 import qualified DeepBanana.Tensor.Mutable as MT
+
+-- Naively splits the generator by reseeding one with a random value from the
+-- current generator. Probably not so great statistically, but should do the job
+-- for our purposes.
+splitGenerator :: forall m d . (MonadCuda m, Device d) => Proxy d -> m Generator
+splitGenerator p = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
+  gen <- get
+  newSeed <- liftIO $ runDeviceM p $ withGenerator gen $ \rawGen -> do
+    res <- CUDA.mallocArray 1
+    CuRAND.generateLongLong rawGen res 1
+    [newSeed] <- CUDA.peekListArray 1 res
+    CUDA.free res
+    return newSeed
+  return $ Generator newSeed 0
 
 uniform :: forall m n d a
         . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))

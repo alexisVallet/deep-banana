@@ -5,6 +5,7 @@ module DeepBanana.Weights (
   ) where
 
 import DeepBanana.HList
+import DeepBanana.Device
 import DeepBanana.Prelude
 import Data.Serialize (Serialize)
 
@@ -114,3 +115,6 @@ instance forall a e (l :: [*])
   logBase (W ((:.) x1 xs1)) (W ((:.) x2 xs2)) =
     W $ (:.) (logBase x1 x2) (unWeights (logBase (W xs1) (W xs2) :: Weights a l))
 
+instance (DeviceTransfer (HList l1) (HList l2))
+         => DeviceTransfer (Weights s l1) (Weights s l2) where
+  transfer (W l1) = fmap W $ transfer l1

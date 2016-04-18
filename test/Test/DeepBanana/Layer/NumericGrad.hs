@@ -1,4 +1,4 @@
-{-# LANGUAGE UndecidableInstances, GADTs #-}
+{-# LANGUAGE UndecidableInstances, GADTs, MultiParamTypeClasses #-}
 module Test.DeepBanana.Layer.NumericGrad where
 
 import Foreign.C
@@ -16,11 +16,11 @@ allClose t1 t2 =
   all (\(x1,x2) -> abs (x1 - x2) / (abs x1 + abs x2) < 0.1)
   $ zip (tensorToList t1) (tensorToList t2)
 
-check_backward :: forall m a w inp out
+check_backward :: forall m d a w inp out
                . (MonadIO m, TensorScalar a, Ord a, Show a,
-                  Show inp, Show (Weights a w), Show out, ToTensor inp,
-                  ToTensor (Weights a w), ToTensor out, Scalar out ~ a,
-                  Scalar (Weights a w) ~ a, Scalar inp ~ a)
+                  Show inp, Show (Weights a w), Show out, ToTensor inp TestDevice,
+                  ToTensor (Weights a w) TestDevice, ToTensor out TestDevice,
+                  Scalar out ~ a, Scalar (Weights a w) ~ a, Scalar inp ~ a)
                => Layer m a w inp out
                -> m (Weights a w)
                -> m inp
@@ -62,9 +62,9 @@ numericBwd f inp upgrad = do
     return $ fdiff <.> upgrad
   return $ tensorFromList' (shape inp) listGrad
 
-genericNumericBwd :: forall inp out m
-                  . (ToTensor inp, ToTensor out, Scalar inp ~ Scalar out,
-                     Monad m, TensorScalar (Scalar inp))
+genericNumericBwd :: forall inp out d m
+                  . (ToTensor inp TestDevice, ToTensor out TestDevice,
+                     Scalar inp ~ Scalar out, Monad m, TensorScalar (Scalar inp))
                   => (inp -> m out)
                   -> inp
                   -> out
@@ -96,30 +96,30 @@ shapeSize (HListShape s1 s2) = shapeSize s1 + shapeSize s2
 shapeSize (PairShape s1 s2) = shapeSize s1 + shapeSize s2
 shapeSize (ListShape ss) = sum $ fmap shapeSize ss
 
-class ToTensor t where
-  toTensor :: (Device d) => Proxy d -> t -> (Tensor d 1 (Scalar t), ShapeInfo t (Scalar t))
-  fromTensor :: (Device d) => (Tensor d 1 (Scalar t), ShapeInfo t (Scalar t)) -> t
+class (Device d) => ToTensor t d where
+  toTensor :: Proxy d -> t -> (Tensor d 1 (Scalar t), ShapeInfo t (Scalar t))
+  fromTensor :: (Tensor d 1 (Scalar t), ShapeInfo t (Scalar t)) -> t
 
-instance (TensorScalar a, Shape (Dim n), Device d) => ToTensor (Tensor d n a) where
-  toTensor _ t = (flatten $ transfer' t, TensorShape $ shape t)
-  fromTensor (t, TensorShape shp) = reshape' shp $ transfer' t
+instance (TensorScalar a, Shape (Dim n), Device d) => ToTensor (Tensor d n a) d where
+  toTensor _ t = (flatten $ t, TensorShape $ shape t)
+  fromTensor (t, TensorShape shp) = reshape' shp $ t
 
-instance ToTensor CFloat where
+instance (Device d) => ToTensor CFloat d where
   toTensor _ x = (tensorFromList' (1:.Z) [x], ScalarShape)
   fromTensor (t,_) = head $ tensorToList t
 
-instance ToTensor CDouble where
+instance (Device d) => ToTensor CDouble d where
   toTensor _ x = (tensorFromList' (1:.Z) [x], ScalarShape)
   fromTensor (t,_) = head $ tensorToList t
 
-instance (TensorScalar a) => ToTensor (Weights a '[]) where
+instance (Device d, TensorScalar a) => ToTensor (Weights a '[]) d where
   toTensor _ _ = (tensorFromList' (0:.Z) [], EmptyShape)
   fromTensor _ = W Z
 
-instance forall a e l
+instance forall a d e l
          . (TensorScalar a, VectorSpace e, VectorSpace (Weights a l), Scalar e ~ a,
-            Scalar (Weights a l) ~ a, ToTensor e, ToTensor (Weights a l))
-         => ToTensor (Weights a (e ': l)) where
+            Scalar (Weights a l) ~ a, ToTensor e d, ToTensor (Weights a l) d)
+         => ToTensor (Weights a (e ': l)) d where
   toTensor p (W ((:.) e l)) =
     let (te,se) = toTensor p e
         (tl,sl) = toTensor p (W l :: Weights a l) 
@@ -129,8 +129,8 @@ instance forall a e l
     in W $ (:.) (fromTensor (te,se) :: e) (unWeights (fromTensor (tl,sl) :: Weights a l))
 
 instance forall a b d
-         . (ToTensor a, ToTensor b, Scalar a ~ Scalar b, TensorScalar (Scalar a))
-         => ToTensor (a,b) where
+         . (ToTensor a d, ToTensor b d, Scalar a ~ Scalar b, TensorScalar (Scalar a))
+         => ToTensor (a,b) d where
   toTensor p (a,b) =
     let (ta,sa) = toTensor p a
         (tb,sb) = toTensor p b
@@ -139,7 +139,8 @@ instance forall a b d
     let (ta,tb) = tsplitAt' (shapeSize sa) t
     in (fromTensor (ta,sa), fromTensor (tb,sb))
 
-instance (ToTensor a, TensorScalar (Scalar a), Scalar a ~ Scalar [a]) => ToTensor [a] where
+instance (ToTensor a d, TensorScalar (Scalar a), Scalar a ~ Scalar [a])
+         => ToTensor [a] d where
   toTensor _ [] = (tensorFromList' (0:.Z) [], ListShape [])
   toTensor p (x:xs) = let (tx, sx) = toTensor p x
                           (txs, sxs) = toTensor p xs in

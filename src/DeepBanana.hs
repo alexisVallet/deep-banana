@@ -4,6 +4,7 @@ module DeepBanana (
   , module DeepBanana.Tensor
   , module DeepBanana.Exception
   , module DeepBanana.Layer
+  , module DeepBanana.Layer.Parallel
   , module DeepBanana.Layer.Recurrent
   , module DeepBanana.Layer.CUDA
   , module DeepBanana.Data
@@ -14,6 +15,7 @@ import DeepBanana.Device
 import DeepBanana.Exception
 import DeepBanana.Tensor
 import DeepBanana.Layer
+import DeepBanana.Layer.Parallel
 import DeepBanana.Layer.Recurrent
 import DeepBanana.Layer.CUDA
 import DeepBanana.Data

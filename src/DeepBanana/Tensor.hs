@@ -102,18 +102,12 @@ reshape' :: forall d n1 n2 a
 reshape' newshp t =
   unsafeRunExcept (reshape newshp t :: Either IncompatibleSize (Tensor d n2 a))
 
-transfer :: (MonadError t m, Variant t OutOfMemory, Shape (Dim n),
-             Device d1, Device d2, TensorScalar a)
-         => Tensor d1 n a -> m (Tensor d2 n a)
-transfer t = embedExcept $ runST $ runExceptT $ do
-  mt <- unsafeThaw t
-  mt' <- MT.copy mt
-  unsafeFreeze mt'
-
-transfer' :: forall n d1 d2 a
-          . (Shape (Dim n), Device d1, Device d2, TensorScalar a)
-          => Tensor d1 n a -> Tensor d2 n a
-transfer' t = unsafeRunExcept (transfer t :: Either OutOfMemory (Tensor d2 n a))
+instance (Device d1, Device d2, TensorScalar a, Shape (Dim n))
+         => DeviceTransfer (Tensor d1 n a) (Tensor d2 n a) where
+  transfer t = embedExcept $ runST $ runExceptT $ do
+    mt <- unsafeThaw t
+    mt' <- MT.copy mt
+    unsafeFreeze mt'
 
 -- | Returns the CuDNN datatype of a tensor.
 dtype :: forall d n a . (TensorScalar a) => Tensor d n a -> CuDNN.DataType

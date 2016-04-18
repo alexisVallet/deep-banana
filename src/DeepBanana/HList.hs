@@ -6,6 +6,7 @@ module DeepBanana.HList (
   , Concat(..)
   ) where
 
+import DeepBanana.Device
 import DeepBanana.Prelude hiding (get, put)
 import Data.Serialize
 
@@ -74,3 +75,13 @@ instance (Concat l1 l2) => Concat (e ': l1) l2 where
   type ConcatRes (e ': l1) l2 = e ': ConcatRes l1 l2
   hconcat (e :. l1) l2 = e :. hconcat l1 l2
   hsplit (e :. l1andl2) = let (l1,l2) = hsplit l1andl2 in (e :. l1, l2)
+
+instance DeviceTransfer (HList '[]) (HList '[]) where
+  transfer = return
+
+instance (DeviceTransfer (HList l1) (HList l2), DeviceTransfer e1 e2)
+         => DeviceTransfer (HList (e1 ': l1)) (HList (e2 ': l2)) where
+  transfer (e1:.l1) = do
+    e2 <- transfer e1
+    l2 <- transfer l1
+    return (e2:.l2)

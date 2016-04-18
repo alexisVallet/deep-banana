@@ -10,6 +10,7 @@ module DeepBanana.Layer.CUDA.Monad (
   , runCudaError
   , unsafeRunCudaError
   , cudaErrorHoist
+  , MonadCudaRand(..)
   , MonadCuda(..)
   , runCudaT
   , runCudaTEx

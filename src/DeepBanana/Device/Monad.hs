@@ -12,6 +12,7 @@ import Control.Monad.Primitive
 import Data.MemoTrie
 import Debug.Trace
 import qualified Foreign.CUDA as CUDA
+import System.IO.Unsafe
 
 import DeepBanana.Prelude
 

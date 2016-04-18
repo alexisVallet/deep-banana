@@ -4,6 +4,8 @@ module DeepBanana.Device (
   , Generator(..)
   , generator
   , withGenerator
+  , DeviceTransfer(..)
+  , transfer'
   ) where
 import qualified DeepBanana.Device.Monad as DeviceM
 import DeepBanana.Device.Monad (
@@ -18,6 +20,8 @@ import Foreign.ForeignPtr
 
 import qualified DeepBanana.Device.Cubits as Cubits
 import qualified DeepBanana.Device.CuRAND as CuRAND
+import DeepBanana.Exception
+import DeepBanana.Tensor.Exception
 import DeepBanana.Prelude
 
 data Generator = Generator {
@@ -43,3 +47,9 @@ withGenerator gen action = do
   CuRAND.destroyGenerator rawGen
   DeviceM.unsafeIOToDevice $ free genptr
   return res
+
+class DeviceTransfer t1 t2 where
+  transfer :: (MonadError t m, Variant t OutOfMemory) => t1 -> m t2
+
+transfer' :: forall t1 t2 . (DeviceTransfer t1 t2) => t1 -> t2
+transfer' t1 = unsafeRunExcept (transfer t1 :: Either OutOfMemory t2)

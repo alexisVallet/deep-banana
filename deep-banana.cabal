@@ -25,6 +25,7 @@ library
                      , DeepBanana.Layer.CUDA.Monad
                      , DeepBanana.Layer.Recurrent
                      , DeepBanana.Layer.Recurrent.Exception
+                     , DeepBanana.Layer.Parallel
                      , DeepBanana.Tensor
                      , DeepBanana.Tensor.Exception
                      , DeepBanana.Tensor.TensorScalar
@@ -64,6 +65,7 @@ library
                      , classy-prelude >= 0.12
                      , lens >= 4.13
                      , MemoTrie >= 0.6
+                     , parallel >= 3.2
   default-language:    Haskell2010
   default-extensions:  ScopedTypeVariables
                      , TypeFamilies

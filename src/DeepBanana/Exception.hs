@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs, TypeFamilies, DataKinds, ImplicitParams, StandaloneDeriving #-}
+{-# LANGUAGE GADTs, TypeFamilies, DataKinds, ImplicitParams, StandaloneDeriving, DeriveGeneric #-}
 module DeepBanana.Exception (
     WithStack
   , withStack
@@ -22,6 +22,13 @@ data Coproduct (l :: [*]) where
   Left' :: a -> Coproduct (a ': l)
   Right' :: Coproduct l -> Coproduct (a ': l)
 
+instance {-# OVERLAPPING #-} (NFData a) => NFData (Coproduct '[a]) where
+  rnf (Left' x) = rnf x
+
+instance (NFData a, NFData (Coproduct b)) => NFData (Coproduct (a ': b)) where
+  rnf (Left' a) = rnf a
+  rnf (Right' cpb) = rnf cpb
+                                      
 class Variant t e where
   setVariant :: e -> t
   getVariant :: t -> Maybe e
@@ -56,7 +63,7 @@ deriving instance (Typeable a, Typeable b) => Typeable (a ': b)
 instance (Show a, Typeable a) => Exception (Coproduct '[a])
 instance (Show a, Show (Coproduct b), Typeable a, Typeable b, Typeable (Coproduct b))
          => Exception (Coproduct (a ': b))
-
+                                  
 throwVariant :: (MonadError t m,  Variant t e) => e -> m a
 throwVariant = throwError . setVariant
 
@@ -72,7 +79,9 @@ catchVariant action handler =
 data WithStack e = WithStack {
     exception :: e
   , callStack :: String
-  } deriving (Eq, Typeable)
+  } deriving (Eq, Typeable, Generic)
+
+instance (NFData e) => NFData (WithStack e)
 
 instance (Show e) => Show (WithStack e) where
   show wse = show (exception wse) ++ "\n" ++ callStack wse

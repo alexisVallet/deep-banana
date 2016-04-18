@@ -18,6 +18,8 @@ type MNISTWeights d = '[
   Tensor d 4 CFloat, Tensor d 1 CFloat,
   Tensor d 4 CFloat, Tensor d 1 CFloat,
   Tensor d 4 CFloat, Tensor d 1 CFloat,
+  Tensor d 4 CFloat, Tensor d 1 CFloat,
+  Tensor d 4 CFloat, Tensor d 1 CFloat,
   Tensor d 4 CFloat, Tensor d 1 CFloat] 
 
 main :: IO ()
@@ -32,7 +34,7 @@ main = do
       test_images_file = mnist_dir </> "test-images.ubyte.gz"
       test_labels_file = mnist_dir </> "test-labels.ubyte.gz"
       nb_labels = 10
-      batch_size = 32
+      batch_size = 128
   putStrLn "Loading training set..."
   emnist_train <- runExceptT $ P.toListM
                   $ load_mnist (Just train_images_url) (Just train_labels_url)
@@ -51,12 +53,18 @@ main = do
        w_0 <- init_weights nb_labels :: CudaT IO (Weights CFloat (MNISTWeights 1))
        let
          nb_val_batches = length mnist_val `div` batch_size
+         preprocessing :: Pipe (Grey, Int) (Tensor 1 4 CFloat, Tensor 1 2 CFloat) (CudaT IO) ()
          preprocessing =
            P.map (\(i,l) -> (i, [l]))
            >-> batch_images nb_labels batch_size
            >-> P.map (\(b,l) -> (VS.map grey_to_float b, l))
            >-> batch_to_gpu (batch_size:.1:.28:.28:.Z) (batch_size:.nb_labels:.Z)
-           :: Pipe (Grey, Int) (Tensor 1 4 CFloat, Tensor 1 2 CFloat) (CudaT IO) ()
+         splitBatches = forever $ do
+           (b1,l1) <- await
+           (b2,l2) <- await
+           b2' <- transfer b2
+           l2' <- transfer l2
+           yield ((l1,b1),(l2',b2'))
          validate (c,w) = do
            let sampleAccuracy = forever $ do
                  (b,l) <- await
@@ -74,12 +82,16 @@ main = do
                           >-> preprocessing
                           >-> sampleAccuracy
            putStrLn $ "Validation accuracy: " ++ pack (show valAccuracy)
-         cost_grad' w b = cost_grad batch_size nb_labels w b
-         optimize = sgd (rmsprop 0.001 0.9 0.1) cost_grad' w_0 :: Pipe (Tensor 1 4 CFloat, Tensor 1 2 CFloat) (CFloat, Weights CFloat (MNISTWeights 1)) (CudaT IO) ()
+         optimize =
+           sgd
+           (rmsprop 0.001 0.9 0.1)
+           (cost_grad (Proxy :: Proxy 1) (Proxy :: Proxy 2) batch_size nb_labels)
+           w_0
        putStrLn "Launching sgd..."
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
+         >-> splitBatches
          >-> optimize
          >-> runEvery 1000 validate
          >-> print_info
@@ -103,6 +115,9 @@ model batch_size nb_labels =
   let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
              >+> bias
              >+> activation activation_relu
+      conv_1 = convolution2d (0,0) (1,1) convolution_fwd_algo_implicit_gemm
+               >+> bias
+               >+> activation activation_relu
       pool = pooling2d (2,2) (1,1) (2,2) pooling_max
       pool_avg = pooling2d (3,3) (1,1) (3,3) pooling_average_count_include_padding in
   conv
@@ -113,20 +128,30 @@ model batch_size nb_labels =
   >+> pool -- 3*3
   >+> conv
   >+> pool_avg -- 1*1
+  >+> dropout 0.5
+  >+> conv_1
+  >+> dropout 0.5
+  >+> conv_1
   >+> lreshape (batch_size:.nb_labels:.Z)
 
 nnet :: (Device d)
-     => Int -> Int
+     => Proxy d -> Int -> Int
      -> Layer (Cuda) CFloat (MNISTWeights d) (Tensor d 2 CFloat, Tensor d 4 CFloat) CFloat
-nnet batch_size nb_labels =
+nnet _ batch_size nb_labels =
   let criteria = mlrCost (batch_size:.nb_labels:.Z) >+> toScalar in
    (id' *** model batch_size nb_labels) >+> criteria
-  
-cost_grad :: (Device d) => Int -> Int -> Weights CFloat (MNISTWeights d)
-          -> (Tensor d 4 CFloat, Tensor d 2 CFloat)
-          -> CudaT IO (CFloat, Weights CFloat (MNISTWeights d))
-cost_grad batch_size nb_labels w_t (batch,labels) = do
-  (cost, bwd) <- cudaToTraining $ forwardBackward (nnet batch_size nb_labels) w_t (labels,batch)
+
+cost_grad :: (Device d1, Device d2) => Proxy d1 -> Proxy d2 -> Int -> Int
+          -> Weights CFloat (MNISTWeights d1)
+          -> ((Tensor d1 2 CFloat, Tensor d1 4 CFloat),
+              (Tensor d2 2 CFloat, Tensor d2 4 CFloat))
+          -> CudaT IO (CFloat, Weights CFloat (MNISTWeights d1))
+cost_grad p1 p2 batch_size nb_labels w_t b = do
+  let net1 = nnet p1 batch_size nb_labels 
+      net2 = nnet p2 batch_size nb_labels
+      fullNet = (dataPar p1 net1 net2) >+> add >+> scale -< 0.5 
+  (cost, bwd) <- cudaToTraining
+                 $ forwardBackward fullNet w_t b
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
 
@@ -146,9 +171,13 @@ init_weights nb_labels = do
   b_2 <- zeros (64:.Z)
   w_3 <- he_init (128:.64:.3:.3:.Z)
   b_3 <- zeros (128:.Z)
-  w_4 <- he_init (10:.128:.3:.3:.Z)
-  b_4 <- zeros (10:.Z)
-  return $ W $ w_1:.b_1:.w_2:.b_2:.w_3:.b_3:.w_4:.b_4:.Z
+  w_4 <- he_init (256:.128:.3:.3:.Z)
+  b_4 <- zeros (256:.Z)
+  w_5 <- he_init (256:.256:.1:.1:.Z)
+  b_5 <- zeros (256:.Z)
+  w_6 <- he_init (10:.256:.1:.1:.Z)
+  b_6 <- zeros (10:.Z)
+  return $ W $ w_1:.b_1:.w_2:.b_2:.w_3:.b_3:.w_4:.b_4:.w_5:.b_5:.w_6:.b_6:.Z
 
 grey_to_float :: Word8 -> CFloat
 grey_to_float i = (fromIntegral i - 128) / 255
