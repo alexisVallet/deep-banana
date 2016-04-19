@@ -14,6 +14,7 @@ module DeepBanana.Prelude (
   , module Control.Monad.Trans.Identity
   , module Control.Monad.Trans.Maybe
   , module Control.Monad.Writer
+  , module Data.NumInstances
   , module Data.Proxy
   , module Data.Ratio
   , module Data.VectorSpace
@@ -127,6 +128,7 @@ import Control.Monad.Writer (
   )
 import Control.Monad.ST
 import Data.Proxy
+import Data.NumInstances
 import Data.Ratio
 import Data.VectorSpace
 import Foreign hiding (void)

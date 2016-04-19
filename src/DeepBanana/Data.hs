@@ -18,6 +18,7 @@ module DeepBanana.Data (
   , accuracy
   , precision
   , recall
+  , topAccuracy
   ) where
 
 import Control.Monad.Random
@@ -332,3 +333,9 @@ recall predGtProd = do
   recall <- P.sum $ predGtProd >-> P.map sampleRec
   len <- P.length predGtProd
   return $ recall / fromIntegral len
+
+topAccuracy :: (Eq a, Floating b, Monad m) => Producer ([a],a) m () -> m b
+topAccuracy topPredAndGt = do
+  let inTopAnd1 (pred,gt) = (if gt `elem` pred then 1 else 0, 1)
+  (rawAccuracy, len) <- P.sum $ topPredAndGt >-> P.map inTopAnd1
+  return $ rawAccuracy / len
