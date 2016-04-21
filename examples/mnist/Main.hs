@@ -14,13 +14,7 @@ import System.Mem
 import Vision.Image hiding (map, shape)
 import Vision.Image.Storage.DevIL
 
-type MNISTWeights d = '[
-  Tensor d 4 CFloat, Tensor d 1 CFloat,
-  Tensor d 4 CFloat, Tensor d 1 CFloat,
-  Tensor d 4 CFloat, Tensor d 1 CFloat,
-  Tensor d 4 CFloat, Tensor d 1 CFloat,
-  Tensor d 4 CFloat, Tensor d 1 CFloat,
-  Tensor d 4 CFloat, Tensor d 1 CFloat] 
+type MNISTWeights d = SizedList' 18 (Tensor d 4 CFloat)
 
 main :: IO ()
 main = do
@@ -114,10 +108,10 @@ cudaToTraining = cudaHoist generalize
 model :: (Device d) => Int -> Int -> Layer (Cuda) CFloat (MNISTWeights d) (Tensor d 4 CFloat) (Tensor d 2 CFloat)
 model batch_size nb_labels =
   let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0
-             >+> bias
+             >+> batchNormalization batchnorm_spatial 10E-5
              >+> activation activation_relu
       conv_1 = convolution2d (0,0) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0
-               >+> bias
+               >+> batchNormalization batchnorm_spatial 10E-5
                >+> activation activation_relu
       pool = pooling2d (2,2) (1,1) (2,2) pooling_max
       pool_avg = pooling2d (3,3) (1,1) (3,3) pooling_average_count_include_padding in
@@ -164,18 +158,24 @@ he_init s@(_:.c:.fh:.fw:.Z) =
 init_weights :: (Device d) => Int -> CudaT IO (Weights CFloat (MNISTWeights d))
 init_weights nb_labels = do
   w_1 <- he_init (32:.1:.3:.3:.Z)
-  b_1 <- zeros (32:.Z)
+  s_1 <- ones (1:.32:.1:.1:.Z)
+  b_1 <- zeros (1:.32:.1:.1:.Z)
   w_2 <- he_init (64:.32:.3:.3:.Z)
-  b_2 <- zeros (64:.Z)
+  s_2 <- ones (1:.64:.1:.1:.Z)
+  b_2 <- zeros (1:.64:.1:.1:.Z)
   w_3 <- he_init (128:.64:.3:.3:.Z)
-  b_3 <- zeros (128:.Z)
+  s_3 <- ones (1:.128:.1:.1:.Z)
+  b_3 <- zeros (1:.128:.1:.1:.Z)
   w_4 <- he_init (256:.128:.3:.3:.Z)
-  b_4 <- zeros (256:.Z)
-  w_5 <- he_init (256:.256:.1:.1:.Z)
-  b_5 <- zeros (256:.Z)
-  w_6 <- he_init (10:.256:.1:.1:.Z)
-  b_6 <- zeros (10:.Z)
-  return $ W $ w_1:.b_1:.w_2:.b_2:.w_3:.b_3:.w_4:.b_4:.w_5:.b_5:.w_6:.b_6:.Z
+  s_4 <- ones (1:.256:.1:.1:.Z)
+  b_4 <- zeros (1:.256:.1:.1:.Z)
+  w_5 <- he_init (512:.256:.1:.1:.Z)
+  s_5 <- ones (1:.512:.1:.1:.Z)
+  b_5 <- zeros (1:.512:.1:.1:.Z)
+  w_6 <- he_init (nb_labels:.512:.1:.1:.Z)
+  s_6 <- ones (1:.nb_labels:.1:.1:.Z)
+  b_6 <- zeros (1:.nb_labels:.1:.1:.Z)
+  return $ W $ w_1:.s_1:.b_1:.w_2:.s_2:.b_2:.w_3:.s_3:.b_3:.w_4:.s_4:.b_4:.w_5:.s_5:.b_5:.w_6:.s_6:.b_6:.Z
 
 grey_to_float :: Word8 -> CFloat
 grey_to_float i = (fromIntegral i - 128) / 255

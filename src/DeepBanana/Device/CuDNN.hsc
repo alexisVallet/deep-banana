@@ -669,3 +669,72 @@ foreign import ccall "cudnnActivationBackward"
                      -> TensorDescriptor -- destDiffDesc
                      -> DevicePtr a -- destDiffData
                      -> DeviceM d Status
+
+-- Batch normalization
+newtype BatchNormMode = BatchNormMode {
+  unBatchNormMode :: CInt
+  } deriving (Eq, Ord, Show, Storable)
+
+#{enum BatchNormMode, BatchNormMode
+ , batchnorm_per_activation = CUDNN_BATCHNORM_PER_ACTIVATION
+ , batchnorm_spatial = CUDNN_BATCHNORM_SPATIAL
+ }
+
+foreign import ccall safe "cudnnBatchNormalizationForwardInference"
+  batchNormalizationForwardInference :: Handle d
+                                     -> BatchNormMode
+                                     -> Ptr a
+                                     -> Ptr a
+                                     -> TensorDescriptor
+                                     -> DevicePtr a
+                                     -> TensorDescriptor
+                                     -> DevicePtr a
+                                     -> TensorDescriptor
+                                     -> DevicePtr a
+                                     -> DevicePtr a
+                                     -> DevicePtr a
+                                     -> DevicePtr a
+                                     -> CDouble
+                                     -> DeviceM d Status
+
+foreign import ccall safe "cudnnBatchNormalizationForwardTraining"
+  batchNormalizationForwardTraining :: Handle d
+                                    -> BatchNormMode
+                                    -> Ptr a
+                                    -> Ptr a
+                                    -> TensorDescriptor
+                                    -> DevicePtr a
+                                    -> TensorDescriptor
+                                    -> DevicePtr a
+                                    -> TensorDescriptor
+                                    -> DevicePtr a
+                                    -> DevicePtr a
+                                    -> CDouble
+                                    -> DevicePtr a
+                                    -> DevicePtr a
+                                    -> CDouble
+                                    -> DevicePtr a
+                                    -> DevicePtr a
+                                    -> DeviceM d Status
+
+foreign import ccall safe "cudnnBatchNormalizationBackward"
+  batchNormalizationBackward :: Handle d
+                             -> BatchNormMode
+                             -> Ptr a
+                             -> Ptr a
+                             -> Ptr a
+                             -> Ptr a
+                             -> TensorDescriptor
+                             -> DevicePtr a
+                             -> TensorDescriptor
+                             -> DevicePtr a
+                             -> TensorDescriptor
+                             -> DevicePtr a
+                             -> TensorDescriptor
+                             -> DevicePtr a
+                             -> DevicePtr a
+                             -> DevicePtr a
+                             -> Double
+                             -> DevicePtr a
+                             -> DevicePtr a
+                             -> DeviceM d Status

@@ -27,6 +27,7 @@ test_cuda_layers = do
   test_log
   test_mlrCost
   test_pooling2d
+  test_batchNormalization
 
 test_dropout :: Spec
 test_dropout = describe "DeepBanana.Layer.Cuda.dropout" $ do
@@ -185,4 +186,18 @@ test_pooling2d :: Spec
 test_pooling2d = describe "DeepBanana.Layer.Cuda.pooling2d" $ do
   it "has an analytic gradient close to the numeric gradient" $ do
     runCudaTEx (generator 42) $ check_backward (pooling2d (2,2) (0,0) (2,2) pooling_max) (return $ W Z) (normal (1:.1:.4:.4:.Z) 0 0.1 :: CudaT IO (Tensor TestDevice 4 CFloat)) (normal (1:.1:.2:.2:.Z) 0 0.1 :: CudaT IO (Tensor TestDevice 4 CFloat))
+    return ()
+
+test_batchNormalization :: Spec
+test_batchNormalization = describe "DeepBanana.Layer.CUDA.CuDNN.batchNormalization" $ do
+  it "has an analytic gradient close to the numeric gradient" $ do
+    runCudaTEx (generator 42)
+      $ check_backward (batchNormalization batchnorm_spatial 10E-5)
+      (do
+          (scale,bias) <- pure (,)
+                          <*> normal (1:.5:.1:.1:.Z) 0 0.1
+                          <*> normal (1:.5:.1:.1:.Z) 0 0.1
+          return $ W $ scale:.bias:.Z)
+      (normal (2:.5:.3:.3:.Z) 0 0.1)
+      (normal (2:.5:.3:.3:.Z) 0 0.1 :: CudaT IO (Tensor TestDevice 4 CFloat))
     return ()

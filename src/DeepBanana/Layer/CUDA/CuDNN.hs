@@ -1,6 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ImplicitParams #-}
 module DeepBanana.Layer.CUDA.CuDNN (
     convolution2d
   , CuDNN.ConvolutionFwdAlgo
@@ -36,6 +37,9 @@ module DeepBanana.Layer.CUDA.CuDNN (
   , CuDNN.softmax_mode_channel
   , nhwc_to_nchw
   , nchw_to_nhwc
+  , batchNormalization
+  , CuDNN.batchnorm_per_activation
+  , CuDNN.batchnorm_spatial
   ) where
 
 import Control.Monad.Primitive (unsafePrimToPrim)
@@ -43,6 +47,7 @@ import Foreign.Marshal
 import Foreign.Marshal.Array
 import Unsafe.Coerce
 import System.IO.Unsafe
+import GHC.Stack
 
 import DeepBanana.Device
 import qualified DeepBanana.Device.CUDA as CUDA
@@ -203,6 +208,34 @@ nhwc_to_nchw = combinePasses' fwdTrans bwdTrans
               mu' <- nchw_to_nhwc' CuDNN.handle mu
               unsafeFreeze mu'
 
+batchNormalization :: forall d m a
+                   . (Device d, MonadCudaError m, TensorScalar a)
+                   => CuDNN.BatchNormMode
+                   -> Double
+                   -> Layer m a '[Tensor d 4 a, Tensor d 4 a] (Tensor d 4 a) (Tensor d 4 a)
+batchNormalization mode epsilon = combinePasses fwdBN bwdBN
+  where fwdBN (W (scale:.bias:.Z)) x = embedCudaErrorFromST $ do
+          (mscale, mbias, mx) <- pure (,,)
+                                 <*> unsafeThaw scale
+                                 <*> unsafeThaw bias
+                                 <*> unsafeThaw x
+          my <- batchNormalizationForward CuDNN.handle mode epsilon mx mscale mbias
+          unsafeFreeze my
+        bwdBN (W (scale:.bias:.Z)) x y = do
+          return $ broadcast' (shape y)
+            >>> \dy -> unsafeRunCudaError $ embedCudaErrorFromST $ do
+            (mx,mdy,mscale) <- pure (,,)
+                               <*> unsafeThaw x
+                               <*> unsafeThaw dy
+                               <*> unsafeThaw scale
+            (mdx,mdscale,mdbias) <- batchNormalizationBackward CuDNN.handle mode epsilon
+                                    mx mdy mscale
+            (dx,dscale,dbias) <- pure (,,)
+                                 <*> unsafeFreeze mdx
+                                 <*> unsafeFreeze mdscale
+                                 <*> unsafeFreeze mdbias
+            return (W $ dscale:.dbias:.Z, dx)
+
 -- Helper functions to deal with low-level boilerplate of CuDNN.
 withDescriptor :: (MonadIO m, MonadError t m, Variant t AllocFailed, Storable desc)
                => (Ptr desc -> m CuDNN.Status) -- creation fct
@@ -223,7 +256,7 @@ withDescriptor create set destroy action = do
 withTensor4d :: forall m t d a b
              . (MonadIO m, PrimMonad m, PrimState m ~ RealWorld, MonadError t m,
                 Variant t AllocFailed, Variant t BadParam,
-                Variant t NotSupported, TensorScalar a, Device d)
+                Variant t NotSupported, TensorScalar a, Device d, ?loc :: CallStack)
              => IOTensor d 4 a
              -> (CuDNN.TensorDescriptor -> CUDA.DevicePtr a -> ExceptT t IO b)
              -> m b
@@ -236,7 +269,7 @@ withTensor4d tensor action = do
       embedExcept eres
 
 withTensorDesc :: (Device d, MonadIO m, MonadError t m, Variant t AllocFailed,
-                   Variant t BadParam, Variant t NotSupported)
+                   Variant t BadParam, Variant t NotSupported, ?loc :: CallStack)
                => Proxy d
                -> CuDNN.TensorFormat
                -> CuDNN.DataType
@@ -261,7 +294,7 @@ withTensorDesc p format dtype (n:.c:.h:.w:.Z) action = do
 withFilter4d :: forall d m t a b
              . (Device d, MonadIO m, PrimMonad m, PrimState m ~ RealWorld,
                 MonadError t m, Variant t AllocFailed,
-                Variant t BadParam, TensorScalar a)
+                Variant t BadParam, TensorScalar a, ?loc :: CallStack)
              => IOTensor d 4 a
              -> (CuDNN.FilterDescriptor -> CUDA.DevicePtr a -> ExceptT t IO b)
              -> m b
@@ -282,7 +315,7 @@ withFilter4d tensor action = do
       embedExcept eres
 
 withConvDesc :: (Device d, MonadIO m, MonadError t m, Variant t AllocFailed,
-                 Variant t BadParam, Variant t NotSupported)
+                 Variant t BadParam, Variant t NotSupported, ?loc :: CallStack)
              => Proxy d -> (Int,Int) -> (Int,Int) -> (Int,Int)
              -> (CuDNN.ConvolutionDescriptor -> m a) -> m a
 withConvDesc p (padh,padw) (strh,strw) (uph,upw) action = do
@@ -299,7 +332,7 @@ withConvDesc p (padh,padw) (strh,strw) (uph,upw) action = do
   withDescriptor createConv setConv destroyConv action
 
 withPoolDesc :: (Device d, MonadIO m, MonadError t m, Variant t AllocFailed,
-                 Variant t BadParam)
+                 Variant t BadParam, ?loc :: CallStack)
              => Proxy d
              -> (Int, Int)
              -> (Int, Int)
@@ -737,3 +770,69 @@ transformTensorIO handle srcf dstf src = do
             embedExcept eres2
           embedExcept eres1
           return dst
+
+-- batch normalization
+batchNormalizationForward :: forall m d a
+                          . (MonadCudaError m, PrimMonad m, Device d, TensorScalar a)
+                          => CuDNN.Handle d
+                          -> CuDNN.BatchNormMode
+                          -> Double
+                          -> MTensor (PrimState m) d 4 a
+                          -> MTensor (PrimState m) d 4 a
+                          -> MTensor (PrimState m) d 4 a
+                          -> m (MTensor (PrimState m) d 4 a)
+batchNormalizationForward handle mode epsilon x scale bias =
+  embedCudaError unsafeIOToPrim $ do
+    let p = Proxy :: Proxy d
+    y <- MT.emptyTensor $ MT.shape x :: CudaErrorT IO (IOTensor d 4 a)
+    withTensor4d (unsafeCoerce x :: IOTensor d 4 a) $ \xdesc xptr -> do
+      withTensor4d (unsafeCoerce scale :: IOTensor d 4 a) $ \scaledesc scaleptr -> do
+        withTensor4d (unsafeCoerce bias :: IOTensor d 4 a) $ \biasdesc biasptr -> do
+          withTensor4d y $ \ydesc yptr -> do
+            (alpha,beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]
+            let nullDevPtr = CUDA.DevicePtr nullPtr
+                cepsilon = realToFrac epsilon
+            handleStatus (Proxy :: Proxy BadParam)
+              $ liftIO $ runDeviceM p
+              $ CuDNN.batchNormalizationForwardTraining handle mode alpha beta xdesc
+              xptr ydesc yptr scaledesc scaleptr biasptr 1 nullDevPtr nullDevPtr cepsilon
+              nullDevPtr nullDevPtr
+            liftIO $ free alpha >> free beta
+    return $ unsafeCoerce y
+
+batchNormalizationBackward :: forall m d a
+                           . (MonadCudaError m, PrimMonad m, Device d, TensorScalar a)
+                           => CuDNN.Handle d
+                           -> CuDNN.BatchNormMode
+                           -> Double
+                           -> MTensor (PrimState m) d 4 a
+                           -> MTensor (PrimState m) d 4 a
+                           -> MTensor (PrimState m) d 4 a
+                           -> m (MTensor (PrimState m) d 4 a
+                                , MTensor (PrimState m) d 4 a
+                                , MTensor (PrimState m) d 4 a)
+batchNormalizationBackward handle mode epsilon x dy scale =
+  embedCudaError unsafeIOToPrim $ do
+    let p = Proxy :: Proxy d
+    (dx,dscale,dbias) <- pure (,,)
+                         <*> MT.emptyTensor (MT.shape x)
+                         <*> MT.emptyTensor (MT.shape scale)
+                         <*> MT.emptyTensor (MT.shape scale)
+                         :: CudaErrorT IO
+                            (IOTensor d 4 a, IOTensor d 4 a, IOTensor d 4 a)
+    withTensor4d (unsafeCoerce x :: IOTensor d 4 a) $ \xdesc xptr -> do
+      withTensor4d (unsafeCoerce dy :: IOTensor d 4 a) $ \dydesc dyptr -> do
+        withTensor4d (unsafeCoerce scale :: IOTensor d 4 a) $ \scaledesc scaleptr -> do
+          withTensor4d dx $ \dxdesc dxptr -> do
+            withTensor4d dscale $ \dscaledesc dscaleptr -> do
+              withTensor4d dbias $ \dbiasdesc dbiasptr -> do
+                (alpha,beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]
+                let nullDevPtr = CUDA.DevicePtr nullPtr
+                    cepsilon = realToFrac epsilon
+                handleStatus (Proxy :: Proxy BadParam)
+                  $ liftIO $ runDeviceM p
+                  $ CuDNN.batchNormalizationBackward handle mode alpha beta alpha beta
+                  xdesc xptr dydesc dyptr dxdesc dxptr scaledesc scaleptr dscaleptr
+                  dbiasptr cepsilon nullDevPtr nullDevPtr
+                liftIO $ free alpha >> free beta
+    return (unsafeCoerce dx, unsafeCoerce dscale, unsafeCoerce dbias)
