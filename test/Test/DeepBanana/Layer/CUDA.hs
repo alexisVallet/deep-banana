@@ -50,7 +50,7 @@ test_sumRows = describe "DeepBanana.Layer.Cuda.sumRows" $ do
 test_convolution :: Spec
 test_convolution = describe "DeepBanana.Layer.Cuda.convolution2d" $ do
   it "has a working forward pass" $ do
-    let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
+    let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0
         filter = tensorFromList' (1:.1:.3:.3:.Z) [0, 1, 0,
                                            1, 0, 1,
                                            0, 1, 0] :: Tensor TestDevice 4 CFloat
@@ -63,7 +63,7 @@ test_convolution = describe "DeepBanana.Layer.Cuda.convolution2d" $ do
     let (actual,_) = runCudaEx (generator 42) $ forward conv (W $ (:.) filter Z) img
     tensorToList actual `shouldBe` tensorToList expected_out
   it "has a correct backward pass" $ do
-    let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
+    let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0
         x = normal (1:.1:.8:.8:.Z) 0 0.1 :: CudaT IO (Tensor TestDevice 4 CFloat)
         y = normal (1:.1:.8:.8:.Z) 0 0.1 :: CudaT IO (Tensor TestDevice 4 CFloat)
         w = do

@@ -38,7 +38,6 @@ main = do
       batch_shape = batch_size:.1:.28:.28:.Z :: Dim 4
       labels_shape = batch_size:.nb_labels:.Z :: Dim 2
       dev1 = Proxy :: Proxy 1
-      dev2 = Proxy :: Proxy 2
   putStrLn "Loading training set..."
   emnist_train <- runExceptT $ P.toListM
                   $ load_mnist (Just train_images_url) (Just train_labels_url)
@@ -93,7 +92,7 @@ main = do
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
-         >-> batch_to_multi_gpus dev1 dev2 batch_shape labels_shape
+         >-> batch_to_gpu dev1 batch_shape labels_shape
          >-> optimize
          >-> runEvery 1000 validate
          >-> print_info
@@ -114,10 +113,10 @@ cudaToTraining = cudaHoist generalize
 
 model :: (Device d) => Int -> Int -> Layer (Cuda) CFloat (MNISTWeights d) (Tensor d 4 CFloat) (Tensor d 2 CFloat)
 model batch_size nb_labels =
-  let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm
+  let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0
              >+> bias
              >+> activation activation_relu
-      conv_1 = convolution2d (0,0) (1,1) convolution_fwd_algo_implicit_gemm
+      conv_1 = convolution2d (0,0) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0
                >+> bias
                >+> activation activation_relu
       pool = pooling2d (2,2) (1,1) (2,2) pooling_max
@@ -145,15 +144,12 @@ nnet _ batch_size nb_labels =
 
 cost_grad :: (Device d1, Device d2) => Proxy d1 -> Proxy d2 -> Int -> Int
           -> Weights CFloat (MNISTWeights d1)
-          -> ((Tensor d1 4 CFloat, Tensor d1 2 CFloat),
-              (Tensor d2 4 CFloat, Tensor d2 2 CFloat))
+          -> (Tensor d1 4 CFloat, Tensor d1 2 CFloat)
           -> CudaT IO (CFloat, Weights CFloat (MNISTWeights d1))
-cost_grad p1 p2 batch_size nb_labels w_t ((b1,l1),(b2,l2)) = do
-  let net1 = nnet p1 batch_size nb_labels 
-      net2 = nnet p2 batch_size nb_labels
-      fullNet = (dataPar p1 net1 net2) >+> add >+> scale -< 0.5 
+cost_grad p1 p2 batch_size nb_labels w_t (b,l) = do
+  let net1 = nnet p1 batch_size nb_labels
   (cost, bwd) <- cudaToTraining
-                 $ forwardBackward fullNet w_t ((l1,b1),(l2,b2))
+                 $ forwardBackward net1 w_t (l,b)
   let (w', _) = bwd (1 :: CFloat)
   return (cost, w')
 

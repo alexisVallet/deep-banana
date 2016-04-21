@@ -196,7 +196,6 @@ newtype AddMode = AddMode {
 
 foreign import ccall safe "cudnnAddTensor"
   addTensor :: Handle d
-            -> AddMode
             -> Ptr a -- alpha
             -> TensorDescriptor -- biasDesc
             -> DevicePtr a -- biasData
@@ -349,6 +348,8 @@ newtype ConvolutionFwdAlgo = ConvolutionFwdAlgo {
  , convolution_fwd_algo_implicit_precomp_gemm = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM
  , convolution_fwd_algo_gemm = CUDNN_CONVOLUTION_FWD_ALGO_GEMM
  , convolution_fwd_algo_direct = CUDNN_CONVOLUTION_FWD_ALGO_DIRECT
+ , convolution_fwd_algo_fft = CUDNN_CONVOLUTION_FWD_ALGO_FFT
+ , convolution_fwd_algo_fft_tiling = CUDNN_CONVOLUTION_FWD_ALGO_FFT_TILING
  }
 
 foreign import ccall safe "cudnnGetConvolutionForwardAlgorithm"
@@ -399,6 +400,26 @@ foreign import ccall safe "cudnnConvolutionBackwardBias"
                           -> DevicePtr a -- destData
                           -> DeviceM d Status
 
+newtype ConvolutionBwdFilterAlgo = ConvolutionBwdFilterAlgo {
+  unConvolutionBwdFilterAlgo :: CInt
+  } deriving (Eq, Ord, Show, Storable)
+
+#{enum ConvolutionBwdFilterAlgo, ConvolutionBwdFilterAlgo
+ , convolution_bwd_filter_algo_0 = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0
+ , convolution_bwd_filter_algo_1 = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_1
+ , convolution_bwd_filter_algo_fft = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_FFT
+ , convolution_bwd_filter_algo_3 = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_3}
+
+foreign import ccall safe "cudnnGetConvolutionBackwardFilterWorkspaceSize"
+  getConvolutionBackwardFilterWorkspaceSize :: Handle d
+                                            -> TensorDescriptor
+                                            -> TensorDescriptor
+                                            -> ConvolutionDescriptor
+                                            -> FilterDescriptor
+                                            -> ConvolutionBwdFilterAlgo
+                                            -> Ptr CSize
+                                            -> DeviceM d Status
+
 -- Computes gradient with regards to the filters.
 foreign import ccall safe "cudnnConvolutionBackwardFilter"
   convolutionBackwardFilter :: Handle d
@@ -408,11 +429,36 @@ foreign import ccall safe "cudnnConvolutionBackwardFilter"
                             -> TensorDescriptor -- diffDesc
                             -> DevicePtr a -- diffData
                             -> ConvolutionDescriptor
+                            -> ConvolutionBwdFilterAlgo
+                            -> DevicePtr Int8
+                            -> CSize
                             -> Ptr a -- beta
                             -> FilterDescriptor -- gradDesc
                             -> DevicePtr a -- gradData
                             -> DeviceM d Status
 
+newtype ConvolutionBwdDataAlgo = ConvolutionBwdDataAlgo {
+  unConvoltuionBwdDataAlgo :: CInt
+  } deriving (Eq, Ord, Show, Storable)
+
+#{enum ConvolutionBwdDataAlgo, ConvolutionBwdDataAlgo
+ , convolution_bwd_data_algo_0 = CUDNN_CONVOLUTION_BWD_DATA_ALGO_0
+ , convolution_bwd_data_algo_1 = CUDNN_CONVOLUTION_BWD_DATA_ALGO_1
+ , convolution_bwd_data_algo_fft = CUDNN_CONVOLUTION_BWD_DATA_ALGO_FFT
+ , convolution_bwd_data_algo_fft_tiling = CUDNN_CONVOLUTION_BWD_DATA_ALGO_FFT_TILING
+  }
+
+
+foreign import ccall safe "cudnnGetConvolutionBackwardDataWorkspaceSize"
+  getConvolutionBackwardDataWorkspaceSize :: Handle d
+                                       -> FilterDescriptor
+                                       -> TensorDescriptor
+                                       -> ConvolutionDescriptor
+                                       -> TensorDescriptor
+                                       -> ConvolutionBwdDataAlgo
+                                       -> Ptr CSize
+                                       -> DeviceM d Status
+                                       
 -- Computes gradient with regards to the data.
 foreign import ccall safe "cudnnConvolutionBackwardData"
   convolutionBackwardData :: Handle d
@@ -422,6 +468,9 @@ foreign import ccall safe "cudnnConvolutionBackwardData"
                           -> TensorDescriptor -- diffDesc
                           -> DevicePtr a -- diffData
                           -> ConvolutionDescriptor
+                          -> ConvolutionBwdDataAlgo
+                          -> DevicePtr Int8 -- workspace
+                          -> CSize -- workspace size
                           -> Ptr a -- beta
                           -> TensorDescriptor -- gradDesc
                           -> DevicePtr a -- gradData

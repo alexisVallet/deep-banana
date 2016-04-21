@@ -37,7 +37,7 @@ dot = Layer $ \_ (x,y) -> do
   x' <- reshape (rx:.cx:.1:.1:.Z) x
   y' <- reshape (cy:.cx':.1:.1:.Z) y
   (xy, bwdxy) <- forwardBackward
-                 (convolution2d (0,0) (1,1) convolution_fwd_algo_implicit_gemm)
+                 (convolution2d (0,0) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0)
                  (W $ y':.Z)
                  x'
   xy' <- reshape (rx:.cy:.Z) xy
