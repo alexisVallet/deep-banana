@@ -14,6 +14,7 @@ import System.Mem
 import Vision.Image hiding (map, shape)
 import Vision.Image.Storage.DevIL
 
+type Device0 = 0
 type Device1 = 1
 type Device2 = 2
 type ConvWeights d a = SizedList' 3 (Tensor d (Dim 4) a)
@@ -76,6 +77,7 @@ main = do
       batch_size = 128
       batch_shape = batch_size:.1:.28:.28:.Z :: Dim 4
       labels_shape = batch_size:.nb_labels:.Z :: Dim 2
+      dev0 = Proxy :: Proxy Device0
       dev1 = Proxy :: Proxy Device1
       dev2 = Proxy :: Proxy Device2
   putStrLn "Loading training set..."
@@ -98,9 +100,12 @@ main = do
              let baseNet = (id' *** layer model)
                            >+> mlrCost (batch_size:.nb_labels:.Z)
                            >+> toScalar
-             in dataPar dev1 baseNet baseNet >+> add_ >+> scaleByCst_ 0.5
-           cost_grad w ((b1,l1),(b2,l2)) = do
-             ~(cost, bwd) <- forwardBackward trainModel w ((l1,b1),(l2,b2))
+             in dataPar dev0 baseNet (dataPar dev0 baseNet baseNet)
+                >+> (id' *** add_)
+                >+> add_
+                >+> scaleByCst_ (1/3)
+           cost_grad w ((b1,l1),(b2,l2),(b3,l3)) = do
+             ~(cost, bwd) <- forwardBackward trainModel w ((l1,b1),((l2,b2),(l3,b3)))
              return (cost, fst $ bwd (1 :: CFloat))
            predict w b = forward (layer model) w b
            nb_val_batches = length mnist_val `div` batch_size
@@ -113,7 +118,7 @@ main = do
              >-> batch_images nb_labels batch_size
              >-> P.map (\(b,l) -> (VS.map grey_to_float b, l))
            validate (c,w) = do
-             let sampleAccuracy :: Pipe (Tensor 1 (Dim 4) CFloat, Tensor 1 (Dim 2) CFloat) ([Int],[Int]) (CudaT IO) ()
+             let sampleAccuracy :: Pipe (Tensor Device0 (Dim 4) CFloat, Tensor Device0 (Dim 2) CFloat) ([Int],[Int]) (CudaT IO) ()
                  sampleAccuracy = forever $ do
                    (b,l) <- await
                    confmat <- lift $ predict w b
@@ -128,7 +133,7 @@ main = do
                      yield ([predl],[gtl])
              valAccuracy <- accuracy $ randomize mnist_val
                             >-> preprocessing
-                            >-> batch_to_gpu dev1 batch_shape labels_shape
+                            >-> batch_to_gpu dev0 batch_shape labels_shape
                             >-> sampleAccuracy
              putStrLn $ "Validation accuracy: " ++ pack (show valAccuracy)
        w_0 <- initWeights model
@@ -136,7 +141,7 @@ main = do
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
-         >-> batch_to_multi_gpus dev1 dev2 batch_shape labels_shape
+         >-> batch_to_gpu3 dev0 dev1 dev2 batch_shape labels_shape
          >-> sgd (momentum 0.05 0.9) cost_grad w_0
          >-> runEvery 1000 validate
          >-> print_info
