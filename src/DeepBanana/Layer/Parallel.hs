@@ -42,7 +42,7 @@ dataPar :: forall t m d w1 w2 b1 s a1 b2 a2
            DeviceTransfer (Weights s w1) (Weights s w2),
            DeviceTransfer (Weights s w2) (Weights s w1),
            Device d,
-           VectorSpace (Weights s w1), Floating (Scalar (Weights s w1)))
+           FixShape (Weights s w1), Floating (FixScalar (Weights s w1)))
         => Proxy d
         -> Layer Cuda s w1 a1 b1
         -> Layer Cuda s w2 a2 b2
@@ -53,5 +53,8 @@ dataPar p l1 l2 = Layer $ \w1 a1a2 -> do
   (b1b2, bwdb1b2) <- forwardBackward (layerPar p l1 l2) w1w2 a1a2
   return (b1b2, \b1b2' -> let (W w1w2', a1a2') = bwdb1b2 b1b2'
                               (w1', w2') = hsplit w1w2' :: (HList w1, HList w2)
-                          in (0.5 *^ ((W w1' :: Weights s w1)
-                                      ^+^ transfer' (W w2' :: Weights s w2)), a1a2'))
+                              w' = unsafeRunExcept
+                                   $ (liftVec (\_w1 _w2 -> 0.5 *^ (_w1 ^+^ _w2))
+                                      (W w1') (transfer' (W w2' :: Weights s w2))
+                                      :: Either IncompatibleShape (Weights s w1))
+                          in (w', a1a2'))

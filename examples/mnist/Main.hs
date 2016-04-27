@@ -15,6 +15,7 @@ import Vision.Image hiding (map, shape)
 import Vision.Image.Storage.DevIL
 
 type Device1 = 1
+type Device2 = 2
 type ConvWeights d a = SizedList' 3 (Tensor d (Dim 4) a)
 
 conv :: (Device d, TensorScalar a, MonadCuda m)
@@ -75,7 +76,8 @@ main = do
       batch_size = 128
       batch_shape = batch_size:.1:.28:.28:.Z :: Dim 4
       labels_shape = batch_size:.nb_labels:.Z :: Dim 2
-      dev1 = Proxy :: Proxy 1
+      dev1 = Proxy :: Proxy Device1
+      dev2 = Proxy :: Proxy Device2
   putStrLn "Loading training set..."
   emnist_train <- runExceptT $ P.toListM
                   $ load_mnist (Just train_images_url) (Just train_labels_url)
@@ -92,11 +94,13 @@ main = do
      (merr,_) <- runCudaT gen $ do       
        putStrLn "Initializing weights..."
        let model = initModel batch_size nb_labels
-           trainModel = (id' *** layer model)
-                        >+> mlrCost (batch_size:.nb_labels:.Z)
-                        >+> toScalar
-           cost_grad w (b,l) = do
-             ~(cost, bwd) <- forwardBackward trainModel w (l,b)
+           trainModel =
+             let baseNet = (id' *** layer model)
+                           >+> mlrCost (batch_size:.nb_labels:.Z)
+                           >+> toScalar
+             in dataPar dev1 baseNet baseNet >+> add_ >+> scaleByCst_ 0.5
+           cost_grad w ((b1,l1),(b2,l2)) = do
+             ~(cost, bwd) <- forwardBackward trainModel w ((l1,b1),(l2,b2))
              return (cost, fst $ bwd (1 :: CFloat))
            predict w b = forward (layer model) w b
            nb_val_batches = length mnist_val `div` batch_size
@@ -132,7 +136,7 @@ main = do
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
-         >-> batch_to_gpu dev1 batch_shape labels_shape
+         >-> batch_to_multi_gpus dev1 dev2 batch_shape labels_shape
          >-> sgd (momentum 0.05 0.9) cost_grad w_0
          >-> runEvery 1000 validate
          >-> print_info
