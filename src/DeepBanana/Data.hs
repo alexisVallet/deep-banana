@@ -226,11 +226,11 @@ batch_images_pad_labels nb_labels batch_size pad_label = do
 
 batch_to_gpu :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
                  Variant t IncompatibleSize, TensorScalar a,
-                 Shape (Dim n1), Shape (Dim n2), Device d)
+                 Shape s1, Shape s2, Device d)
              => Proxy d
-             -> Dim n1
-             -> Dim n2
-             -> Pipe (SVector a, SVector a) (Tensor d n1 a, Tensor d n2 a) m ()
+             -> s1
+             -> s2
+             -> Pipe (SVector a, SVector a) (Tensor d s1 a, Tensor d s2 a) m ()
 batch_to_gpu p shp1 shp2 = forever $ do
   (batch, labels) <- await
   tbatch <- fromVector shp1 batch
@@ -239,14 +239,14 @@ batch_to_gpu p shp1 shp2 = forever $ do
 
 batch_to_multi_gpus :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
                         Variant t IncompatibleSize, TensorScalar a,
-                        Shape (Dim n1), Shape (Dim n2), Device d1, Device d2)
+                        Shape s1, Shape s2, Device d1, Device d2)
                     => Proxy d1
                     -> Proxy d2
-                    -> Dim n1
-                    -> Dim n2
+                    -> s1
+                    -> s2
                     -> Pipe (SVector a, SVector a)
-                            ((Tensor d1 n1 a, Tensor d1 n2 a),
-                             (Tensor d2 n1 a, Tensor d2 n2 a)) m ()
+                            ((Tensor d1 s1 a, Tensor d1 s2 a),
+                             (Tensor d2 s1 a, Tensor d2 s2 a)) m ()
 batch_to_multi_gpus p1 p2 shp1 shp2 = forever $ do
   (b1, l1) <- await
   (b2, l2) <- await
@@ -259,10 +259,10 @@ batch_to_multi_gpus p1 p2 shp1 shp2 = forever $ do
 
 batch_labels_to_gpu :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
                         Variant t IncompatibleSize, TensorScalar a,
-                        Shape (Dim n1), Shape (Dim n2), Device d1, Device d2)
-                    => Dim n1
-                    -> Dim n2
-                    -> Pipe (SVector a, [SVector a]) (Tensor d1 n1 a, [Tensor d2 n2 a]) m ()
+                        Shape s1, Shape s2, Device d1, Device d2)
+                    => s1
+                    -> s2
+                    -> Pipe (SVector a, [SVector a]) (Tensor d1 s1 a, [Tensor d2 s2 a]) m ()
 batch_labels_to_gpu shp1 shp2 = forever $ do
   (batch, labels) <- await
   tbatch <- fromVector shp1 batch

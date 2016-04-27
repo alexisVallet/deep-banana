@@ -4,7 +4,6 @@ import qualified Foreign.CUDA as CUDA
 
 import Test.DeepBanana.Layer.CUDA
 import Test.DeepBanana.Layer.Numeric
-import Test.DeepBanana.Layer.Recurrent
 import Test.DeepBanana.Tensor
 
 import DeepBanana.Prelude
@@ -16,4 +15,3 @@ main = do
     test_tensor
     test_numeric_layers
     test_cuda_layers
-    test_recurrent_layers

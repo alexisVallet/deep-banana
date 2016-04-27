@@ -37,13 +37,13 @@ splitGenerator p = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
     return newSeed
   return $ Generator newSeed 0
 
-uniform :: forall m n d a
-        . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
-        => Dim n -> m (Tensor d n a)
+uniform :: forall m s d a
+        . (MonadCuda m, Device d, TensorScalar a, Shape s)
+        => s -> m (Tensor d s a)
 uniform shp = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
   let outSize = size shp
-  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d n a)  
+  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d s a)  
   liftIO $ MT.withDevicePtr res $ \resptr -> do
     runDeviceM (Proxy :: Proxy d)
       $ withGenerator gen $ \rawGen -> do
@@ -51,13 +51,13 @@ uniform shp = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
   unsafeFreeze res >>= return . unsafeCoerce
 
-normal :: forall m d n a
-       . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
-       => Dim n -> a -> a -> m (Tensor d n a)
+normal :: forall m d s a
+       . (MonadCuda m, Device d, TensorScalar a, Shape s)
+       => s -> a -> a -> m (Tensor d s a)
 normal shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
   let outSize = size shp
-  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d n a)  
+  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d s a)  
   liftIO $ MT.withDevicePtr res $ \resptr -> do
     runDeviceM (Proxy :: Proxy d)
       $ withGenerator gen $ \rawGen -> do
@@ -65,13 +65,13 @@ normal shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
   unsafeFreeze res >>= return . unsafeCoerce
 
-logNormal :: forall m d n a
-       . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
-       => Dim n -> a -> a -> m (Tensor d n a)
+logNormal :: forall m d s a
+       . (MonadCuda m, Device d, TensorScalar a, Shape s)
+       => s -> a -> a -> m (Tensor d s a)
 logNormal shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
   let outSize = size shp
-  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d n a)  
+  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d s a)  
   liftIO $ MT.withDevicePtr res $ \resptr -> do
     runDeviceM (Proxy :: Proxy d)
       $ withGenerator gen $ \rawGen -> do
@@ -80,14 +80,14 @@ logNormal shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   unsafeFreeze res >>= return . unsafeCoerce
 
 -- dropout
-dropout :: forall m d n a
-        . (MonadCuda m, Device d, TensorScalar a, Shape (Dim n))
+dropout :: forall m d s a
+        . (MonadCuda m, Device d, TensorScalar a, Shape s)
         => a
-        -> Layer m a '[] (Tensor d n a) (Tensor d n a)
+        -> Layer m a '[] (Tensor d s a) (Tensor d s a)
 dropout drop_proba = Layer $ \_ x -> embedCudaFromST $ do
   let outSize = size $ shape x
   mask <- embedCuda unsafeIOToPrim $ do
-    mmask <- MT.emptyTensor $ shape x :: CudaT IO (MT.IOTensor d n a)
+    mmask <- MT.emptyTensor $ shape x :: CudaT IO (MT.IOTensor d s a)
     gen <- get
     liftIO $ do
       MT.withDevicePtr mmask $ \maskptr -> do
@@ -95,6 +95,14 @@ dropout drop_proba = Layer $ \_ x -> embedCudaFromST $ do
           withGenerator gen $ \rawGen -> do
             generateUniform rawGen maskptr (fromIntegral outSize)
       MT.threshInplace mmask drop_proba
-    unsafeFreeze mmask >>= return . unsafeCoerce
+    unsafeFreeze mmask >>= return . unsafeCoerce :: CudaT IO (Tensor d s a)
   modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
-  return (x * mask, broadcast' (shape x) >>> \upgrad -> (W Z, upgrad * mask))
+  case toAnyFixed $ shape x of
+   AnyFixed fshape -> do
+     fx <- shapeConvert fshape x
+     fmask <- shapeConvert fshape mask
+     y <- shapeConvert (shape x) $ fx * fmask
+     return (y, broadcast' (shape x) >>> \upgrad -> unsafeRunCudaError $ do
+                fdy <- shapeConvert fshape upgrad
+                dx <- shapeConvert (shape x) $ fdy * fmask
+                return (W Z, dx))

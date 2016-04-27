@@ -1,11 +1,14 @@
-{-# LANGUAGE StandaloneDeriving, GeneralizedNewtypeDeriving, TypeFamilies #-}
+{-# LANGUAGE StandaloneDeriving, GeneralizedNewtypeDeriving, TypeFamilies, RankNTypes #-}
 module DeepBanana.Weights (
     module DeepBanana.HList
   , Weights(..)
+  , FixShape(..)
   ) where
 
 import DeepBanana.HList
 import DeepBanana.Device
+import DeepBanana.Exception
+import DeepBanana.Tensor.Exception
 import DeepBanana.Prelude
 import Data.Serialize (Serialize)
 
@@ -118,3 +121,29 @@ instance forall a e (l :: [*])
 instance (DeviceTransfer (HList l1) (HList l2))
          => DeviceTransfer (Weights s l1) (Weights s l2) where
   transfer (W l1) = fmap W $ transfer l1
+
+instance HMonoid (Weights s) where
+  hmempty = W hmempty
+  W l1 <+> W l2 = W $ l1 <+> l2
+
+class (Floating (FixScalar t)) => FixShape t where
+  type FixScalar t :: *
+  liftVec :: (MonadError e m, Variant e IncompatibleShape)
+          => (forall t'
+              . (Floating t', VectorSpace t', Scalar t' ~ FixScalar t)
+              => t' -> t' -> t')
+          -> t -> t -> m t
+
+instance (Floating a) => FixShape (Weights a '[]) where
+  type FixScalar (Weights a '[]) = a
+  liftVec f x y = return $ f x y
+
+instance forall a e l
+         . (FixShape e, FixShape (Weights a l),
+            FixScalar e ~ FixScalar (Weights a l))
+         => FixShape (Weights a (e ': l)) where
+  type FixScalar (Weights a (e ': l)) = FixScalar (Weights a l)
+  liftVec f (W (e1:.l1)) (W (e2:.l2)) = do
+    e <- liftVec f e1 e2
+    W l <- liftVec f (W l1 :: Weights a l) (W l2)
+    return $ W $ e:.l

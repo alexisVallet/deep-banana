@@ -23,8 +23,6 @@ library
                      , DeepBanana.Layer.CUDA.CuRAND
                      , DeepBanana.Layer.CUDA.Numeric
                      , DeepBanana.Layer.CUDA.Monad
-                     , DeepBanana.Layer.Recurrent
-                     , DeepBanana.Layer.Recurrent.Exception
                      , DeepBanana.Layer.Parallel
                      , DeepBanana.Tensor
                      , DeepBanana.Tensor.Exception
@@ -91,7 +89,6 @@ test-suite deep-banana-test
                      , Test.DeepBanana.Layer.CUDA
                      , Test.DeepBanana.Layer.Numeric
                      , Test.DeepBanana.Layer.NumericGrad
-                     , Test.DeepBanana.Layer.Recurrent
                      , Test.DeepBanana.Tensor
   build-depends:       base >= 4.7
                      , deep-banana >= 0.1
@@ -140,6 +137,7 @@ executable example-mnist
                      , cuda >= 0.7
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   extensions:          NoImplicitPrelude
+                     , NoMonomorphismRestriction
 
 executable example-tatoeba
   

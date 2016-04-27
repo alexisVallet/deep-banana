@@ -1,22 +1,24 @@
-{-# LANGUAGE TypeFamilies, RankNTypes #-}
+{-# LANGUAGE TypeFamilies, RankNTypes, InstanceSigs #-}
 {-|
 Compositional layers which learn a set of weights through backpropagation.
 -}
 module DeepBanana.Layer (
     module DeepBanana.Weights
   , Layer(..)
-  , Layer'
+  , InitLayer
+  , initWeights
+  , layer
+  , init
+  , init'
   , forward
   , backward
   , combinePasses
   , combinePasses'
-  , id'
   , (***)
   , (&&&)
   , first
   , second
   , terminal
-  , (>+>)
   , (-<)
   , noWeights
   , effect
@@ -25,24 +27,20 @@ module DeepBanana.Layer (
 import DeepBanana.Prelude hiding (get, put)
 import DeepBanana.Weights
 
--- | A layer 'Layer m a w inp out' is a differentiable computation taking an input of
--- type 'inp' alongside a list of weights 'w' to produce an output of type 'out' within
--- some monad 'm'. Inputs and weights should be vector spaces whose scalar type is 'a'.
---
--- The need for the computation to be in a monad 'm' arises from layers such as dropout
--- which depend on some random number computation. Crucially, the datatype ensures all
--- effects take place only during the forward pass, and that no additional effect take
--- place during the backward pass.
---
--- Layers form a category in 2 separate and useful ways:
--- * One where the parameter 'w' must be identical for all composed layers, meaning they
---   all share the same weights. This leads directly to recurrent neural networks, and
---   happens through the standard instance from "Control.Category".
--- * One where the weight list parameters get concatenated. This leads to feed-forward
---   neural networks, and happens through the '>+>' operator.
 newtype Layer m a (w :: [*]) inp out = Layer {
   forwardBackward :: Weights a w -> inp -> m (out, out -> (Weights a w, inp))
   }
+
+data InitLayer m a w inp out = InitLayer {
+    layer :: Layer m a w inp out
+  , initWeights :: m (Weights a w)
+  }
+
+init :: Layer m a w inp out -> m (Weights a w) -> InitLayer m a w inp out
+init = InitLayer
+
+init' :: (Applicative m) => Layer m a '[] inp out -> InitLayer m a '[] inp out
+init' l = InitLayer l $ pure hmempty
 
 instance (Monad m, AdditiveGroup out, AdditiveGroup inp, AdditiveGroup (Weights a w))
          => AdditiveGroup (Layer m a w inp out) where
@@ -66,10 +64,6 @@ instance (Monad m, VectorSpace out, VectorSpace inp, VectorSpace (Weights a w),
     (out, bwd) <- forwardBackward l w inp
     return (x *^ out, \out' -> let (w', inp') = bwd out' in
                                 (x *^ w', x *^ inp'))
-
-type Layer' m w a b = (VectorSpace a, VectorSpace (Weights (Scalar a) w),
-                       Scalar a ~ Scalar (Weights (Scalar a) w))
-                    => Layer m (Scalar a) w a b
 
 -- | Runs the forward pass of a layer.
 forward :: (Monad m) => Layer m a w inp out -> Weights a w -> inp -> m out
@@ -114,9 +108,6 @@ instance forall a (w :: [*]) m . (AdditiveGroup (Weights a w), Monad m)
                             (wgrad2,agrad) = bwdab bgrad in
                         (wgrad1 ^+^ wgrad2, agrad))
 
-id' :: (Monad m) => Layer m a '[] inp inp
-id' = id
-
 infixr 4 ***
 (***) :: forall m s w1 w2 a b a' b' n
       . (Monad m, Concat w1 w2)
@@ -158,17 +149,23 @@ terminal :: (AdditiveGroup inp, Monad m)
 terminal x = noWeights $ \_ -> return (x, \_ -> zeroV)
 
 -- Feed-forward composition.
-infixr 3 >+>
-(>+>) :: forall s w1 w2 a b c m n
-      . (Monad m, Concat w1 w2)
-      => Layer m s w1 a b -> Layer m s w2 b c -> Layer m s (ConcatRes w1 w2) a c
-Layer fab >+> Layer fbc = Layer $ \w1w2 a -> do
-  let (w1,w2) = hsplit $ unWeights w1w2 :: (HList w1, HList w2)
-  ~(b, bwdab) <- fab (W w1) a
-  ~(c, bwdbc) <- fbc (W w2) b
-  return (c, \c' -> let (w2grad, bgrad) = bwdbc c'
-                        (w1grad, agrad) = bwdab bgrad in
-                    (W $ hconcat (unWeights w1grad) (unWeights w2grad), agrad))
+instance (Monad m) => HCategory (Layer m s) where
+  id' = id
+  (>+>) :: forall w1 w2 s a b c . (Concat w1 w2)
+        => Layer m s w1 a b -> Layer m s w2 b c
+        -> Layer m s (ConcatRes w1 w2) a c
+  Layer fab >+> Layer fbc = Layer $ \w1w2 a -> do
+    let (w1,w2) = hsplit $ unWeights w1w2 :: (HList w1, HList w2)
+    ~(b, bwdab) <- fab (W w1) a
+    ~(c, bwdbc) <- fbc (W w2) b
+    return (c, \c' -> let (w2grad, bgrad) = bwdbc c'
+                          (w1grad, agrad) = bwdab bgrad in
+                      (W $ hconcat (unWeights w1grad) (unWeights w2grad), agrad))
+
+instance (Monad m) => HCategory (InitLayer m s) where
+  id' = InitLayer id' (return hmempty)
+  InitLayer lab initW1 >+> InitLayer lbc initW2 =
+    InitLayer (lab >+> lbc) (pure (<+>) <*> initW1 <*> initW2)
 
 -- Making a layer out of a differentiable function that does not depend on a set
 -- of weights.

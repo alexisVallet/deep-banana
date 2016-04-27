@@ -14,7 +14,51 @@ import System.Mem
 import Vision.Image hiding (map, shape)
 import Vision.Image.Storage.DevIL
 
-type MNISTWeights d = SizedList' 18 (Tensor d 4 CFloat)
+type Device1 = 1
+type ConvWeights d a = SizedList' 3 (Tensor d (Dim 4) a)
+
+conv :: (Device d, TensorScalar a, MonadCuda m)
+     => Int -> Int -> Int
+     -> InitLayer m a (ConvWeights d a) (Tensor d (Dim 4) a) (Tensor d (Dim 4) a)
+conv inp out sz =
+  convLayer >+> batchNorm >+> relu
+  where
+    convLayer =
+      init
+      (convolution2d (sz `div` 2, sz `div` 2) (1,1)
+       convolution_fwd_algo_implicit_gemm
+       convolution_bwd_data_algo_0
+       convolution_bwd_filter_algo_0)
+      (he_init (out:.inp:.sz:.sz:.Z))
+    batchNorm =
+      init (batchNormalization batchnorm_spatial 10E-5)
+      (pure (<+>) <*> ones_w (1:.out:.1:.1:.Z) <*>  zeros_w (1:.out:.1:.1:.Z))
+    relu = init' $ activation activation_relu
+
+pool :: (Device d, MonadCuda m, TensorScalar a)
+     => Int -> PoolingMode
+     -> InitLayer m a '[] (Tensor d (Dim 4) a) (Tensor d (Dim 4) a)
+pool sz mode = init' $ pooling2d (sz,sz) (0,0) (sz,sz) mode
+
+type MNISTWeights d a = SizedList' 18 (Tensor d (Dim 4) a)
+
+initModel :: (Device d, MonadCuda m, TensorScalar a)
+          => Int -> Int
+          -> InitLayer m a (MNISTWeights d a) (Tensor d (Dim 4) a) (Tensor d (Dim 2) a)
+initModel batch_size nb_labels =
+        conv 1 32 3
+        >+> pool 2 pooling_max -- 14*14
+        >+> conv 32 64 3
+        >+> pool 2 pooling_max -- 7*7
+        >+> conv 64 128 3
+        >+> pool 2 pooling_max-- 3*3
+        >+> conv 128 256 3
+        >+> pool 3 pooling_average_count_include_padding -- 1*1
+        >+> init' (dropout 0.5)
+        >+> conv 256 512 1
+        >+> init' (dropout 0.5)
+        >+> conv 512 nb_labels 1
+        >+> init' (lreshape (batch_size:.nb_labels:.Z))
 
 main :: IO ()
 main = do
@@ -45,49 +89,51 @@ main = do
    Left err -> ioError $ userError $ "Error loading the dataset: " ++ err
    Right (mnist_train,mnist_val) -> do
      putStrLn "Starting training..."
-     (merr,_) <- runCudaT gen $ do
+     (merr,_) <- runCudaT gen $ do       
        putStrLn "Initializing weights..."
-       w_0 <- init_weights nb_labels :: CudaT IO (Weights CFloat (MNISTWeights 1))
-       let
-         nb_val_batches = length mnist_val `div` batch_size
-         preprocessing :: Pipe
-                          (Grey, Int)
-                          (SVector CFloat, SVector CFloat)
-                          (CudaT IO) ()
-         preprocessing =
-           P.map (\(i,l) -> (i, [l]))
-           >-> batch_images nb_labels batch_size
-           >-> P.map (\(b,l) -> (VS.map grey_to_float b, l))
-         validate (c,w) = do
-           let sampleAccuracy :: Pipe (Tensor 1 4 CFloat, Tensor 1 2 CFloat) ([Int],[Int]) (CudaT IO) ()
-               sampleAccuracy = forever $ do
-                 (b,l) <- await
-                 confmat <- lift $ predict batch_size nb_labels w b
-                 let rows:.cols:.Z = shape confmat
-                     predAndGt =
-                       zip
-                       (splitEvery cols $ tensorToList confmat)
-                       (splitEvery cols $ tensorToList l)
-                 forM_ predAndGt $ \(predconfs,gtconfs) -> do
-                   let (predl,conf) = argmax predconfs
-                       (gtl,_) = argmax gtconfs
-                   yield ([predl],[gtl])
-           valAccuracy <- accuracy $ randomize mnist_val
-                          >-> preprocessing
-                          >-> batch_to_gpu dev1 batch_shape labels_shape
-                          >-> sampleAccuracy
-           putStrLn $ "Validation accuracy: " ++ pack (show valAccuracy)
-         optimize =
-           sgd
-           (rmsprop 0.001 0.9 0.1)
-           (cost_grad (Proxy :: Proxy 1) (Proxy :: Proxy 2) batch_size nb_labels)
-           w_0
+       let model = initModel batch_size nb_labels
+           trainModel = (id' *** layer model)
+                        >+> mlrCost (batch_size:.nb_labels:.Z)
+                        >+> toScalar
+           cost_grad w (b,l) = do
+             ~(cost, bwd) <- forwardBackward trainModel w (l,b)
+             return (cost, fst $ bwd (1 :: CFloat))
+           predict w b = forward (layer model) w b
+           nb_val_batches = length mnist_val `div` batch_size
+           preprocessing :: Pipe
+                            (Grey, Int)
+                            (SVector CFloat, SVector CFloat)
+                            (CudaT IO) ()
+           preprocessing =
+             P.map (\(i,l) -> (i, [l]))
+             >-> batch_images nb_labels batch_size
+             >-> P.map (\(b,l) -> (VS.map grey_to_float b, l))
+           validate (c,w) = do
+             let sampleAccuracy :: Pipe (Tensor 1 (Dim 4) CFloat, Tensor 1 (Dim 2) CFloat) ([Int],[Int]) (CudaT IO) ()
+                 sampleAccuracy = forever $ do
+                   (b,l) <- await
+                   confmat <- lift $ predict w b
+                   let rows:.cols:.Z = shape confmat
+                       predAndGt =
+                         zip
+                         (splitEvery cols $ tensorToList confmat)
+                         (splitEvery cols $ tensorToList l)
+                   forM_ predAndGt $ \(predconfs,gtconfs) -> do
+                     let (predl,conf) = argmax predconfs
+                         (gtl,_) = argmax gtconfs
+                     yield ([predl],[gtl])
+             valAccuracy <- accuracy $ randomize mnist_val
+                            >-> preprocessing
+                            >-> batch_to_gpu dev1 batch_shape labels_shape
+                            >-> sampleAccuracy
+             putStrLn $ "Validation accuracy: " ++ pack (show valAccuracy)
+       w_0 <- initWeights model
        putStrLn "Launching sgd..."
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
          >-> batch_to_gpu dev1 batch_shape labels_shape
-         >-> optimize
+         >-> sgd (momentum 0.05 0.9) cost_grad w_0
          >-> runEvery 1000 validate
          >-> print_info
      case merr of
@@ -105,77 +151,19 @@ argmax = L.maximumBy (\(i1,x1) (i2,x2) -> compare x1 x2) . zip [0..]
 cudaToTraining :: Cuda a -> (CudaT IO) a
 cudaToTraining = cudaHoist generalize
 
-model :: (Device d) => Int -> Int -> Layer (Cuda) CFloat (MNISTWeights d) (Tensor d 4 CFloat) (Tensor d 2 CFloat)
-model batch_size nb_labels =
-  let conv = convolution2d (1,1) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0
-             >+> batchNormalization batchnorm_spatial 10E-5
-             >+> activation activation_relu
-      conv_1 = convolution2d (0,0) (1,1) convolution_fwd_algo_implicit_gemm convolution_bwd_data_algo_0 convolution_bwd_filter_algo_0
-               >+> batchNormalization batchnorm_spatial 10E-5
-               >+> activation activation_relu
-      pool = pooling2d (2,2) (1,1) (2,2) pooling_max
-      pool_avg = pooling2d (3,3) (1,1) (3,3) pooling_average_count_include_padding in
-  conv
-  >+> pool -- 14*14
-  >+> conv
-  >+> pool -- 7*7
-  >+> conv
-  >+> pool -- 3*3
-  >+> conv
-  >+> pool_avg -- 1*1
-  >+> dropout 0.5
-  >+> conv_1
-  >+> dropout 0.5
-  >+> conv_1
-  >+> lreshape (batch_size:.nb_labels:.Z)
+he_init :: (Device d, TensorScalar a, MonadCuda m)
+        => Dim 4 -> m (Weights a '[Tensor d (Dim 4) a])
+he_init s@(_:.c:.fh:.fw:.Z) = do
+  t <- normal s 0 (sqrt (2 / (fromIntegral c * fromIntegral fh * fromIntegral fw)))
+  return $ W $ t:.Z
 
-nnet :: (Device d)
-     => Proxy d -> Int -> Int
-     -> Layer (Cuda) CFloat (MNISTWeights d) (Tensor d 2 CFloat, Tensor d 4 CFloat) CFloat
-nnet _ batch_size nb_labels =
-  let criteria = mlrCost (batch_size:.nb_labels:.Z) >+> toScalar in
-   (id' *** model batch_size nb_labels) >+> criteria
+zeros_w :: (Device d, TensorScalar a, MonadCuda m, Shape s)
+        => s -> m (Weights a '[Tensor d s a])
+zeros_w = fmap (\t -> W $ t:.Z) . zeros
 
-cost_grad :: (Device d1, Device d2) => Proxy d1 -> Proxy d2 -> Int -> Int
-          -> Weights CFloat (MNISTWeights d1)
-          -> (Tensor d1 4 CFloat, Tensor d1 2 CFloat)
-          -> CudaT IO (CFloat, Weights CFloat (MNISTWeights d1))
-cost_grad p1 p2 batch_size nb_labels w_t (b,l) = do
-  let net1 = nnet p1 batch_size nb_labels
-  (cost, bwd) <- cudaToTraining
-                 $ forwardBackward net1 w_t (l,b)
-  let (w', _) = bwd (1 :: CFloat)
-  return (cost, w')
-
-predict :: (Device d) => Int -> Int -> Weights CFloat (MNISTWeights d) -> Tensor d 4 CFloat -> CudaT IO (Tensor d 2 CFloat)
-predict batch_size nb_labels w_t batch = do
-  cudaToTraining $ forward (model batch_size nb_labels) w_t batch
-
-he_init :: (Device d) => Dim 4 -> CudaT IO (Tensor d 4 CFloat)
-he_init s@(_:.c:.fh:.fw:.Z) =
-  normal s 0 (sqrt (2 / (fromIntegral c * fromIntegral fh * fromIntegral fw)))
-
-init_weights :: (Device d) => Int -> CudaT IO (Weights CFloat (MNISTWeights d))
-init_weights nb_labels = do
-  w_1 <- he_init (32:.1:.3:.3:.Z)
-  s_1 <- ones (1:.32:.1:.1:.Z)
-  b_1 <- zeros (1:.32:.1:.1:.Z)
-  w_2 <- he_init (64:.32:.3:.3:.Z)
-  s_2 <- ones (1:.64:.1:.1:.Z)
-  b_2 <- zeros (1:.64:.1:.1:.Z)
-  w_3 <- he_init (128:.64:.3:.3:.Z)
-  s_3 <- ones (1:.128:.1:.1:.Z)
-  b_3 <- zeros (1:.128:.1:.1:.Z)
-  w_4 <- he_init (256:.128:.3:.3:.Z)
-  s_4 <- ones (1:.256:.1:.1:.Z)
-  b_4 <- zeros (1:.256:.1:.1:.Z)
-  w_5 <- he_init (512:.256:.1:.1:.Z)
-  s_5 <- ones (1:.512:.1:.1:.Z)
-  b_5 <- zeros (1:.512:.1:.1:.Z)
-  w_6 <- he_init (nb_labels:.512:.1:.1:.Z)
-  s_6 <- ones (1:.nb_labels:.1:.1:.Z)
-  b_6 <- zeros (1:.nb_labels:.1:.1:.Z)
-  return $ W $ w_1:.s_1:.b_1:.w_2:.s_2:.b_2:.w_3:.s_3:.b_3:.w_4:.s_4:.b_4:.w_5:.s_5:.b_5:.w_6:.s_6:.b_6:.Z
+ones_w :: (Device d, TensorScalar a, MonadCuda m, Shape s)
+       => s -> m (Weights a '[Tensor d s a])
+ones_w = fmap (\t -> W $ t:.Z) . ones
 
 grey_to_float :: Word8 -> CFloat
 grey_to_float i = (fromIntegral i - 128) / 255
@@ -185,9 +173,9 @@ data InfoState = InfoState {
   rolling_cost :: Maybe CFloat
   }
 
-print_info :: Device d => Consumer (CFloat, Weights CFloat (MNISTWeights d)) (CudaT IO) ()
+print_info :: Consumer (CFloat, w) (CudaT IO) ()
 print_info = flip evalStateT (InfoState Nothing) $ forM_ [1..] $ \i -> do
-  (cost, weights) <- lift $ await
+  (cost, _) <- lift $ await
   roll_cost <- do
     mcur_roll_cost <- gets rolling_cost
     case mcur_roll_cost of

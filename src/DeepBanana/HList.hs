@@ -4,8 +4,14 @@ module DeepBanana.HList (
   , SizedList
   , SizedList'
   , Concat(..)
+  , HCategory(..)
+  , HMonoid(..)
   ) where
 
+import Control.Applicative
+import qualified Control.Monad.RWS.Strict as S
+import qualified Control.Monad.State.Strict as S
+import qualified Control.Monad.Writer.Strict as S
 import DeepBanana.Device
 import DeepBanana.Prelude hiding (get, put)
 import Data.Serialize
@@ -85,3 +91,17 @@ instance (DeviceTransfer (HList l1) (HList l2), DeviceTransfer e1 e2)
     e2 <- transfer e1
     l2 <- transfer l1
     return (e2:.l2)
+
+infixr 3 >+>
+class HCategory (cat :: [*] -> * -> * -> *) where
+  id' :: cat '[] a a
+  (>+>) :: (Concat l1 l2) => cat l1 a b -> cat l2 b c -> cat (ConcatRes l1 l2) a c
+
+infixr 3 <+>
+class HMonoid (t :: [*] -> *) where
+  hmempty :: t '[]
+  (<+>) :: (Concat l1 l2) => t l1 -> t l2 -> t (ConcatRes l1 l2)
+
+instance HMonoid HList where
+  hmempty = Z
+  (<+>) = hconcat

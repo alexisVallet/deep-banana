@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric, UndecidableInstances #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilies, BangPatterns #-}
+{-# LANGUAGE RankNTypes, AllowAmbiguousTypes #-}
 {-|
 GPU multi-dimensional dense numeric arrays.
 -}
@@ -12,6 +13,9 @@ module DeepBanana.Tensor (
   , dtype
   , reshape
   , reshape'
+  , shapeConvert
+  , liftFixed1
+  , liftFixed2
   , transfer
   , transfer'
   , broadcast
@@ -41,6 +45,7 @@ module DeepBanana.Tensor (
   ) where
 
 import Data.Serialize (Serialize)
+import qualified Data.Serialize as S
 import qualified Data.Vector.Storable as SV
 import qualified Data.Vector.Storable.Mutable as SMV
 import System.IO.Unsafe
@@ -56,125 +61,155 @@ import qualified DeepBanana.Tensor.Mutable as MT
 import DeepBanana.Tensor.Mutable (MTensor)
 import DeepBanana.Tensor.Shape
 import DeepBanana.Tensor.TensorScalar
+import DeepBanana.Weights
 
-data Tensor d (n :: Nat) a = Tensor {
-    shape :: Dim n
-  , dataptr :: ForeignPtr a
+data Tensor d s a = Tensor {
+    shape :: s
+  , dataptr :: !(ForeignPtr a)
   }
 
-instance (Shape (Dim n), Device d, TensorScalar a, Eq a) => Eq (Tensor d n a) where
+instance (Shape s, Device d, TensorScalar a, Eq a) => Eq (Tensor d s a) where
   t1 == t2 = tensorToList t1 == tensorToList t2 && shape t1 == shape t2
 
-data STensor d n a = STensor (Dim n) [a]
-               deriving Generic
+instance (Device d, Shape s, TensorScalar a)
+         => Serialize (Tensor d s a) where
+  put t = do
+    S.put $ shape t
+    S.put $ tensorToList t
+  get = do
+    shp <- S.get
+    tlist <- S.get
+    return $ tensorFromList' shp tlist
 
-instance forall d n a
-         . (Device d, Shape (Dim n), Generic a, TensorScalar a)
-         => Generic (Tensor d n a) where
-  type Rep (Tensor d n a) = Rep (STensor d n a)
-  from t = from (STensor (shape t) (tensorToList t) :: STensor d n a)
-  to rep = let STensor shp listData = to rep :: STensor d n a in
-            tensorFromList' shp listData
+instance (NFData s) => NFData (Tensor d s a) where
+  rnf (Tensor s _) = rnf s
 
-instance (Device d, Shape (Dim n), Serialize a, Generic a, TensorScalar a)
-         => Serialize (Tensor d n a)
-
-instance (Device d, Shape (Dim n), NFData a, Generic a, TensorScalar a)
-         => NFData (Tensor d n a)
-
-instance (Device d, Shape (Dim n), TensorScalar a, Show a)
-         => Show (Tensor d n a) where
+instance (Device d, Shape s, TensorScalar a, Show a)
+         => Show (Tensor d s a) where
   show t = "Tensor " ++ show  (shape t)
            ++ " "  ++ show (take 10 $ tensorToList t)
 
 -- | Reshaping.
-reshape :: (Shape (Dim n1), Shape (Dim n2), TensorScalar a,
+reshape :: (Shape s1, Shape s2, TensorScalar a,
             MonadError t m, Variant t IncompatibleSize)
-        => Dim n2 -> Tensor d n1 a -> m (Tensor d n2 a)
+        => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
 reshape newshp t@(Tensor oldshp dataptr) = do
   when (size newshp /= size oldshp) $ throwVariant $ incompatibleSize $
     "Couldn't reshape tensor from shape " ++ show oldshp ++ " to shape " ++ show newshp ++ ": incompatible sizes " ++ show (size oldshp) ++ " and " ++ show (size newshp)
   return $ Tensor newshp dataptr
 
-reshape' :: forall d n1 n2 a
-         . (Shape (Dim n1), Shape (Dim n2), TensorScalar a)
-         => Dim n2 -> Tensor d n1 a -> Tensor d n2 a
+reshape' :: forall d s1 s2 a
+         . (Shape s1, Shape s2, TensorScalar a)
+         => s2 -> Tensor d s1 a -> Tensor d s2 a
 reshape' newshp t =
-  unsafeRunExcept (reshape newshp t :: Either IncompatibleSize (Tensor d n2 a))
+  unsafeRunExcept (reshape newshp t :: Either IncompatibleSize (Tensor d s2 a))
 
-instance (Device d1, Device d2, TensorScalar a, Shape (Dim n))
-         => DeviceTransfer (Tensor d1 n a) (Tensor d2 n a) where
+shapeConvert :: forall s1 s2 d l a m t
+             . (MonadError t m, Shape s1, Shape s2, Variant t IncompatibleShape)
+             => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
+shapeConvert outshp (Tensor shp datafptr) = do
+  when (dimensions outshp /= dimensions shp) $ throwVariant $ incompatibleShape $
+    "Cannot convert tensor from dynamic shape " ++ show shp ++ " to fixed shape " ++ show outshp
+  return $ Tensor outshp datafptr
+
+liftFixed1 :: forall d s1 a . (Shape s1)
+           => (forall s2 . (IsFixed s2) => Tensor d s2 a -> Tensor d s2 a) -> Tensor d s1 a -> Tensor d s1 a
+liftFixed1 f x = unsafeRunExcept eres
+  where
+    eres :: Either IncompatibleShape (Tensor d s1 a)
+    eres = do
+      case toAnyFixed $ shape x of
+       AnyFixed fshp -> do
+         fx <- shapeConvert fshp x
+         shapeConvert (shape x) $ f fx
+
+instance (Device d, Shape s, TensorScalar a) => FixShape (Tensor d s a) where
+  type FixScalar (Tensor d s a) = a
+  liftVec = liftFixed2
+  
+liftFixed2 :: (Shape s1, MonadError t m, Variant t IncompatibleShape)
+           => (forall s2 . (IsFixed s2) => Tensor d s2 a -> Tensor d s2 a -> Tensor d s2 a)
+           -> Tensor d s1 a -> Tensor d s1 a -> m (Tensor d s1 a)
+liftFixed2 g x1 x2 = do
+  case toAnyFixed $ shape x1 of
+   AnyFixed fshp -> do
+     fx1 <- shapeConvert fshp x1
+     fx2 <- shapeConvert fshp x2
+     shapeConvert (shape x1) $ g fx1 fx2
+
+instance (Device d1, Device d2, TensorScalar a, Shape s)
+         => DeviceTransfer (Tensor d1 s a) (Tensor d2 s a) where
   transfer t = embedExcept $ runST $ runExceptT $ do
     mt <- unsafeThaw t
     mt' <- MT.copy mt
     unsafeFreeze mt'
 
 -- | Returns the CuDNN datatype of a tensor.
-dtype :: forall d n a . (TensorScalar a) => Tensor d n a -> CuDNN.DataType
+dtype :: forall d s a . (TensorScalar a) => Tensor d s a -> CuDNN.DataType
 dtype _ = datatype (Proxy :: Proxy a)
 
 -- | Converts a mutable tensor into an immutable one in O(1) time. The data is not
 -- copied, so one should make sure the input mutable tensor is not modified after the
 -- the conversion. Unsafe.
-unsafeFreeze :: (PrimMonad m) => MTensor (PrimState m) d n a -> m (Tensor d n a)
+unsafeFreeze :: (PrimMonad m) => MTensor (PrimState m) d s a -> m (Tensor d s a)
 unsafeFreeze (MT.MTensor shp ptr) = return $ Tensor shp ptr
 
 -- | Converts an immutable tensor into a mutable one in O(1) time. The data is not
 -- copied, so one should make sure the input immutable tensor is not used after the
 -- conversion. Unsafe.
-unsafeThaw :: (PrimMonad m) => Tensor d n a -> m (MTensor (PrimState m) d n a)
+unsafeThaw :: (PrimMonad m) => Tensor d s a -> m (MTensor (PrimState m) d s a)
 unsafeThaw (Tensor shp ptr) = return $ MT.MTensor shp ptr
 
 -- | Initializes a tensor with all zeros.
-zeros :: (Device d, Shape (Dim n), TensorScalar a, MonadError t m,
+zeros :: (Device d, Shape s, TensorScalar a, MonadError t m,
           Variant t OutOfMemory)
-      => Dim n -> m (Tensor d n a)
+      => s -> m (Tensor d s a)
 zeros shp = do
   embedExcept $ runST $ runExceptT $ MT.zeros shp >>= unsafeFreeze
 
-zeros' :: forall d n a
-       . (Device d, Shape (Dim n), TensorScalar a)
-       => Dim n -> Tensor d n a
-zeros' shp = unsafeRunExcept (zeros shp :: Either OutOfMemory (Tensor d n a))
+zeros' :: forall d s a
+       . (Device d, Shape s, TensorScalar a)
+       => s -> Tensor d s a
+zeros' shp = unsafeRunExcept (zeros shp :: Either OutOfMemory (Tensor d s a))
 
 -- | Initializes a tensor with all ones.
-ones :: (Device d, Shape (Dim n), TensorScalar a, MonadError t m,
+ones :: (Device d, Shape s, TensorScalar a, MonadError t m,
          Variant t OutOfMemory)
-     => Dim n -> m (Tensor d n a)
+     => s -> m (Tensor d s a)
 ones shp = do
   embedExcept $ runST $ runExceptT $ MT.ones shp >>= unsafeFreeze
 
-ones' :: forall d n a
-      . (Device d, Shape (Dim n),  TensorScalar a)
-      => Dim n -> Tensor d n a
-ones' shp = unsafeRunExcept (ones shp :: Either OutOfMemory (Tensor d n a))
+ones' :: forall d s a
+      . (Device d, Shape s,  TensorScalar a)
+      => s -> Tensor d s a
+ones' shp = unsafeRunExcept (ones shp :: Either OutOfMemory (Tensor d s a))
 
 -- | Initializes a tensor from list data. If the length of the list does not correspond
 -- to the size of the desired shape, throws an exception at run time.
-tensorFromList :: (Device d, Shape (Dim n), TensorScalar a, MonadError t m,
+tensorFromList :: (Device d, Shape s, TensorScalar a, MonadError t m,
                    Variant t IncompatibleSize, Variant t OutOfMemory)
-               => Dim n -> [a] -> m (Tensor d n a)
+               => s -> [a] -> m (Tensor d s a)
 tensorFromList shape value = do
   embedExcept $ runST $ runExceptT $ MT.tensorFromList shape value >>= unsafeFreeze
 
-tensorFromList' :: forall d n a
-                . (Device d, Shape (Dim n), TensorScalar a)
-                => Dim n -> [a] -> Tensor d n a
+tensorFromList' :: forall d s a
+                . (Device d, Shape s, TensorScalar a)
+                => s -> [a] -> Tensor d s a
 tensorFromList' shape value =
   unsafeRunExcept (tensorFromList shape value
-                   :: Either (Coproduct '[IncompatibleSize, OutOfMemory]) (Tensor d n a))
+                   :: Either (Coproduct '[IncompatibleSize, OutOfMemory]) (Tensor d s a))
 
 -- | Converts a tensor to a list.
-tensorToList :: (Shape (Dim n), Device d, TensorScalar a) => Tensor d n a -> [a]
+tensorToList :: (Shape s, Device d, TensorScalar a) => Tensor d s a -> [a]
 tensorToList t = runST $ unsafeThaw t >>= MT.tensorToList
 
 -- | Converts a storable vector to an immutable tensor. Throws an error at runtime
 -- when the input's length does not correspond to the desired output size. Runs in
 -- O(n) time.
-fromVector :: forall t m d n a
-           . (Device d, Shape (Dim n), TensorScalar a, MonadError t m,
+fromVector :: forall t m d s a
+           . (Device d, Shape s, TensorScalar a, MonadError t m,
               Variant t OutOfMemory, Variant t IncompatibleSize)
-           => Dim n -> SVector a -> m (Tensor d n a)
+           => s -> SVector a -> m (Tensor d s a)
 fromVector shp value = do
   when (length value /= size shp) $ throwVariant $ incompatibleSize $
     "fromVector: Incompatible sizes\n\tinput vector: "
@@ -188,16 +223,16 @@ fromVector shp value = do
         runDeviceM (Proxy :: Proxy d) $ CUDA.pokeArray (size shp) vptr resptr
     unsafeFreeze res
 
-fromVector' :: forall d n a
-            . (Device d, Shape (Dim n), TensorScalar a)
-            => Dim n -> SVector a -> Tensor d n a
+fromVector' :: forall d s a
+            . (Device d, Shape s, TensorScalar a)
+            => s -> SVector a -> Tensor d s a
 fromVector' shp value =
   unsafeRunExcept (fromVector shp value
-                   :: Either (Coproduct '[OutOfMemory, IncompatibleSize]) (Tensor d n a))
+                   :: Either (Coproduct '[OutOfMemory, IncompatibleSize]) (Tensor d s a))
 
 -- | Converts a tensor to a storable vector. Runs in O(n) time.
-toVector :: forall d n a
-         . (Device d, Shape (Dim n), TensorScalar a) => Tensor d n a -> SVector a
+toVector :: forall d s a
+         . (Device d, Shape s, TensorScalar a) => Tensor d s a -> SVector a
 toVector t = unsafePerformIO $ do
   res <- SMV.new $ size $ shape t
   mt <- unsafeThaw t
@@ -209,7 +244,7 @@ toVector t = unsafePerformIO $ do
 -- | Concatenates two 1-dimensional tensors. Inverse of tsplit. Runs in O(n+m) time.
 tconcat :: forall t d m a
         . (Device d, TensorScalar a, MonadError t m, Variant t OutOfMemory)
-        => Tensor d 1 a -> Tensor d 1 a -> m (Tensor d 1 a)
+        => Tensor d (Dim 1) a -> Tensor d (Dim 1) a -> m (Tensor d (Dim 1) a)
 tconcat t1 t2 = do
   embedExcept $ unsafePerformIO $ runExceptT $ do
     let t1sz = size $ shape t1
@@ -230,15 +265,15 @@ tconcat t1 t2 = do
 
 tconcat' :: forall d a
          . (Device d, TensorScalar a)
-         => Tensor d 1 a -> Tensor d 1 a -> Tensor d 1 a
+         => Tensor d (Dim 1) a -> Tensor d (Dim 1) a -> Tensor d (Dim 1) a
 tconcat' t1 t2 =
-  unsafeRunExcept (tconcat t1 t2 :: Either OutOfMemory (Tensor d 1 a))
+  unsafeRunExcept (tconcat t1 t2 :: Either OutOfMemory (Tensor d (Dim 1) a))
 
 -- | Splits a 1-dimensional tensor into 2 parts. Inverse of tconcat. Runs in O(n+m) time.
 tsplitAt :: forall t d m a
          . (Device d, TensorScalar a, MonadError t m, Variant t OutOfMemory,
             Variant t IncompatibleSize)
-         => Int -> Tensor d 1 a -> m (Tensor d 1 a, Tensor d 1 a)
+         => Int -> Tensor d (Dim 1) a -> m (Tensor d (Dim 1) a, Tensor d (Dim 1) a)
 tsplitAt t1sz t = do
   let t2sz = size (shape t) - t1sz
   when (t2sz < 0) $ throwVariant $ incompatibleSize $
@@ -261,23 +296,24 @@ tsplitAt t1sz t = do
 
 tsplitAt' :: forall d a
           . (Device d, TensorScalar a)
-          => Int -> Tensor d 1 a -> (Tensor d 1 a, Tensor d 1 a)
-tsplitAt' t1sz t = unsafeRunExcept (tsplitAt t1sz t :: Either (Coproduct '[OutOfMemory,IncompatibleSize]) (Tensor d 1 a, Tensor d 1 a))
+          => Int -> Tensor d (Dim 1) a -> (Tensor d (Dim 1) a, Tensor d (Dim 1) a)
+tsplitAt' t1sz t = unsafeRunExcept (tsplitAt t1sz t :: Either (Coproduct '[OutOfMemory,IncompatibleSize]) (Tensor d (Dim 1) a, Tensor d (Dim 1) a))
 
 -- | Flattens a tensor into a 1-dimensional vector.
-flatten :: forall n d a
-        . (Shape (Dim n), TensorScalar a)
-        => Tensor d n a -> Tensor d 1 a
+flatten :: forall s d a
+        . (Shape s, TensorScalar a)
+        => Tensor d s a -> Tensor d (Dim 1) a
 flatten t =
-  case reshape (size (shape t) :. Z) t :: Either IncompatibleSize (Tensor d 1 a) of
+  case reshape (size (shape t) :. Z) t
+       :: Either IncompatibleSize (Tensor d (Dim 1) a) of
    Left err -> error $ "Couldn't flatten a tensor. This shouldn't happen.\n" ++ show err
    Right res -> res
 
 -- | Type-safe broadcasting.
-broadcast :: forall d t n m a
-          . (Device d, Shape (Dim n), TensorScalar a, MonadError t m,
+broadcast :: forall d t s1 s2 m a
+          . (Device d, Shape s1, Shape s2, TensorScalar a, MonadError t m,
              Variant t IncompatibleShape, Variant t OutOfMemory)
-          => Dim n -> Tensor d n a -> m (Tensor d n a)
+          => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
 broadcast outshp inp = do
   when (not $ broadcastable (shape inp) outshp) $ throwVariant $ incompatibleShape $
     "Couldn't broadcast shape " ++ show (shape inp) ++ " to shape " ++ show outshp
@@ -304,17 +340,17 @@ broadcast outshp inp = do
         CUDA.free out_shapeptr
     unsafeFreeze mout
 
-broadcast' :: forall n d a
-           . (Device d, Shape (Dim n), TensorScalar a)
-           => Dim n -> Tensor d n a -> Tensor d n a
+broadcast' :: forall s1 s2 d a
+           . (Device d, Shape s1, Shape s2, TensorScalar a)
+           => s2 -> Tensor d s1 a -> Tensor d s2 a
 broadcast' outshp inp =
   unsafeRunExcept (broadcast outshp inp
-                   :: Either (Coproduct '[IncompatibleShape, OutOfMemory]) (Tensor d n a))
+                   :: Either (Coproduct '[IncompatibleShape, OutOfMemory]) (Tensor d s2 a))
 
-bin_broadcast :: forall n d t m a
-              . (Device d, Shape (Dim n), TensorScalar a, MonadError t m,
+bin_broadcast :: forall s d t m a
+              . (Device d, Shape s, TensorScalar a, MonadError t m,
                  Variant t IncompatibleShape, Variant t OutOfMemory)
-              => Tensor d n a -> Tensor d n a -> m (Tensor d n a, Tensor d n a)
+              => Tensor d s a -> Tensor d s a -> m (Tensor d s a, Tensor d s a)
 bin_broadcast t1 t2 =
   case (broadcast (shape t2) t1, broadcast (shape t1) t2) of
    (Left err1, Left err2) -> throwError err1 >> throwError err2
@@ -322,79 +358,79 @@ bin_broadcast t1 t2 =
    (Left err, Right t2') -> return (t1, t2')
    _ -> return (t1, t2)
 
-bin_broadcast' :: forall d n a
-               . (Device d, Shape (Dim n), TensorScalar a)
-               => Tensor d n a -> Tensor d n a -> (Tensor d n a, Tensor d n a)
+bin_broadcast' :: forall d s a
+               . (Device d, Shape s, TensorScalar a)
+               => Tensor d s a -> Tensor d s a -> (Tensor d s a, Tensor d s a)
 bin_broadcast' t1 t2 =
   unsafeRunExcept (bin_broadcast t1 t2
-                   :: Either (Coproduct '[IncompatibleShape, OutOfMemory]) (Tensor d n a, Tensor d n a))
+                   :: Either (Coproduct '[IncompatibleShape, OutOfMemory]) (Tensor d s a, Tensor d s a))
 
-instance forall d n a . (Device d, Shape (Dim n), TensorScalar a)
-         => Num (Tensor d n a) where
-  _t1 + _t2 = let (t1,t2) = bin_broadcast' _t1 _t2
-                  eres = unsafePerformIO $ runExceptT $ do
-                    t1' <- unsafeThaw t1
-                    t2' <- unsafeThaw t2
-                    t3' <- MT.copy t2'
-                    liftIO $ MT.withDevicePtr t1' $ \t1ptr -> do
-                      MT.withDevicePtr t3' $ \t3ptr -> runDeviceM (Proxy :: Proxy d) $ do
-                        MT.rawAdd t1ptr t3ptr
-                          $ fromIntegral $ size $ shape t1
-                    unsafeFreeze t3' in
-               unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
-  _t1 * _t2 = let (t1,t2) = bin_broadcast' _t1 _t2
-                  eres = unsafePerformIO $ runExceptT $ do
-                    t1' <- unsafeThaw t1
-                    t2' <- unsafeThaw t2
-                    t3' <- MT.copy t2'
-                    liftIO $ MT.withDevicePtr t1' $ \t1ptr -> do
-                      MT.withDevicePtr t3' $ \t3ptr -> runDeviceM (Proxy :: Proxy d) $ do
-                        MT.rawMul t1ptr t3ptr
-                          $ fromIntegral $ size $ shape t1
-                    unsafeFreeze t3' in
-               unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
-  _t1 - _t2 = let (t1,t2) = bin_broadcast' _t1 _t2
-                  eres = unsafePerformIO $ runExceptT $ do
-                    t1' <- unsafeThaw t1
-                    t2' <- unsafeThaw t2
-                    t3' <- MT.copy t2'
-                    liftIO $ MT.withDevicePtr t1' $ \t1ptr -> do
-                      MT.withDevicePtr t3' $ \t3ptr -> runDeviceM (Proxy :: Proxy d) $ do
-                        MT.rawSubtract t1ptr t3ptr
-                          $ fromIntegral $ size $ shape t1
-                    unsafeFreeze t3' in
-               unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
+instance forall d s a
+         . (Device d, IsFixed s, TensorScalar a)
+         => Num (Tensor d s a) where
+  t1 + t2 = let
+    eres = unsafePerformIO $ runExceptT $ do
+      t1' <- unsafeThaw t1
+      t2' <- unsafeThaw t2
+      t3' <- MT.copy t2'
+      liftIO $ MT.withDevicePtr t1' $ \t1ptr -> do
+        MT.withDevicePtr t3' $ \t3ptr -> runDeviceM (Proxy :: Proxy d) $ do
+          MT.rawAdd t1ptr t3ptr
+            $ fromIntegral $ size $ shape t1
+      unsafeFreeze t3' in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
+
+  t1 * t2 = let 
+    eres = unsafePerformIO $ runExceptT $ do
+      t1' <- unsafeThaw t1
+      t2' <- unsafeThaw t2
+      t3' <- MT.copy t2'
+      liftIO $ MT.withDevicePtr t1' $ \t1ptr -> do
+        MT.withDevicePtr t3' $ \t3ptr -> runDeviceM (Proxy :: Proxy d) $ do
+          MT.rawMul t1ptr t3ptr
+            $ fromIntegral $ size $ shape t1
+      unsafeFreeze t3' in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
+
+  t1 - t2 = let
+    eres = unsafePerformIO $ runExceptT $ do
+      t1' <- unsafeThaw t1
+      t2' <- unsafeThaw t2
+      t3' <- MT.copy t2'
+      liftIO $ MT.withDevicePtr t1' $ \t1ptr -> do
+        MT.withDevicePtr t3' $ \t3ptr -> runDeviceM (Proxy :: Proxy d) $ do
+          MT.rawSubtract t1ptr t3ptr
+            $ fromIntegral $ size $ shape t1
+      unsafeFreeze t3' in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
   negate t = let eres = unsafePerformIO $ runExceptT $ do
                    res <- unsafeThaw t >>= MT.copy
                    liftIO $ MT.withDevicePtr res $ \resptr -> runDeviceM (Proxy :: Proxy d) $ do
                      MT.rawNegate resptr
                        $ fromIntegral $ size $ shape t
                    unsafeFreeze res in
-              unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
+              unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
   signum t = let eres = unsafePerformIO $ runExceptT $ do
                    res <- unsafeThaw t >>= MT.copy
                    liftIO $ MT.withDevicePtr res $ \resptr -> runDeviceM (Proxy :: Proxy d) $ do
                      MT.rawSignum resptr
                        $ fromIntegral $ size $ shape t
                    unsafeFreeze res in
-              unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
+              unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
   fromInteger i = fromInteger i *^ ones' scalarShape
 
-instance forall d n a
-         . (Device d, Shape (Dim n), TensorScalar a)
-         => Fractional (Tensor d n a) where
+instance forall d s a
+         . (Device d, IsFixed s, TensorScalar a)
+         => Fractional (Tensor d s a) where
   recip x = let eres = unsafePerformIO $ runExceptT $ do
                   res <- unsafeThaw x >>= MT.copy
                   liftIO $ MT.inv res
                   unsafeFreeze res in
-             unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
+             unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
   fromRational r = fromInteger (numerator r) / fromInteger (denominator r)
 
 -- | Computes the elementwise maximum of 2 tensors.
-elementwiseMax :: forall d n a t m
-               . (Device d, Shape (Dim n), TensorScalar a, MonadError t m,
+elementwiseMax :: forall d s a t m
+               . (Device d, IsFixed s, TensorScalar a, MonadError t m,
                   Variant t OutOfMemory, Variant t IncompatibleShape)
-               => Tensor d n a -> Tensor d n a -> m (Tensor d n a)
+               => Tensor d s a -> Tensor d s a -> m (Tensor d s a)
 elementwiseMax _x _y = do
   (x,y) <- bin_broadcast _x _y
   embedExcept $ unsafePerformIO $ runExceptT $ do
@@ -405,10 +441,10 @@ elementwiseMax _x _y = do
         MT.rawMax pmx pmy (fromIntegral $ size $ shape x)
     unsafeFreeze my
 
-fromRaw :: forall d n a
-        . (Device d, Shape (Dim n), TensorScalar a)
+fromRaw :: forall d s a
+        . (Device d, IsFixed s, TensorScalar a)
         => (CUDA.DevicePtr a -> CSize -> DeviceM d ())
-        -> Tensor d n a -> Tensor d n a
+        -> Tensor d s a -> Tensor d s a
 fromRaw action x =
   let eres = unsafePerformIO $ runExceptT $ do
         mx <- unsafeThaw x
@@ -416,10 +452,11 @@ fromRaw action x =
         liftIO $ MT.withDevicePtr res $ \resptr -> runDeviceM (Proxy :: Proxy d) $ do
           action resptr $ fromIntegral $ size $ shape x
         unsafeFreeze res
-  in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
+  in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
 
-instance forall d n a
-         . (Device d, Shape (Dim n), TensorScalar a) => Floating (Tensor d n a) where
+instance forall d s a
+         . (Device d, IsFixed s, TensorScalar a)
+         => Floating (Tensor d s a) where
   pi = pi *^ ones' scalarShape
   exp = fromRaw MT.rawExp
   log = fromRaw MT.rawLog
@@ -445,27 +482,27 @@ instance forall d n a
                      MT.rawPow pmx pmy
                        $ fromIntegral $ size $ shape x
                  unsafeFreeze my
-           in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
+           in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
 
 -- Vector space instance for Tensors.
-instance (Device d, Shape (Dim n), TensorScalar a)
-         => AdditiveGroup (Tensor d n a) where
+instance (Device d, IsFixed s, TensorScalar a)
+         => AdditiveGroup (Tensor d s a) where
   zeroV = fromInteger 0
   t1 ^+^ t2 = t1 + t2
   negateV t = negate t
 
-instance forall d n a
-         . (Device d, Shape (Dim n), TensorScalar a)
-         => VectorSpace (Tensor d n a) where
-  type Scalar (Tensor d n a) = a
+instance forall d s a
+         . (Device d, IsFixed s, TensorScalar a)
+         => VectorSpace (Tensor d s a) where
+  type Scalar (Tensor d s a) = a
   x *^ t = let eres = unsafePerformIO $ runExceptT $ do
                  res <- unsafeThaw t >>= MT.copy
                  liftIO $ MT.withDevicePtr res $ \resptr -> runDeviceM (Proxy :: Proxy d) $ do
                    MT.rawScale x resptr
                      $ fromIntegral $ size $ shape t
                  unsafeFreeze res
-           in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d n a))
+           in unsafeRunExcept (eres :: Either OutOfMemory (Tensor d s a))
 
-instance (Device d, Shape (Dim n), TensorScalar a)
-         => InnerSpace (Tensor d n a) where
+instance (Device d, IsFixed s, TensorScalar a)
+         => InnerSpace (Tensor d s a) where
   t1 <.> t2 = foldr (+) 0 $ fmap (\(x1,x2) -> x1 * x2) $ zip (tensorToList t1) (tensorToList t2)

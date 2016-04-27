@@ -10,8 +10,8 @@ import Config
 import DeepBanana
 import DeepBanana.Prelude hiding (head)
 
-allClose :: (TensorScalar a, Device d, Ord a, Shape (Dim n))
-         => Tensor d n a -> Tensor d n a -> Bool
+allClose :: (TensorScalar a, Device d, Ord a, Shape s)
+         => Tensor d s a -> Tensor d s a -> Bool
 allClose t1 t2 =
   all (\(x1,x2) -> abs (x1 - x2) / (abs x1 + abs x2) < 0.1)
   $ zip (tensorToList t1) (tensorToList t2)
@@ -20,7 +20,7 @@ check_backward :: forall m d a w inp out
                . (MonadIO m, TensorScalar a, Ord a, Show a,
                   Show inp, Show (Weights a w), Show out, ToTensor inp TestDevice,
                   ToTensor (Weights a w) TestDevice, ToTensor out TestDevice,
-                  Scalar out ~ a, Scalar (Weights a w) ~ a, Scalar inp ~ a)
+                  FixScalar out ~ a, FixScalar (Weights a w) ~ a, FixScalar inp ~ a)
                => Layer m a w inp out
                -> m (Weights a w)
                -> m inp
@@ -42,11 +42,13 @@ check_backward layer weights input upgrad = do
     ++ show num_x' ++ "\nAnalytic: " ++ show analytic_x'
     else return ()
 
-numericBwd :: (TensorScalar a, Device d, Shape (Dim n), Shape (Dim k), Monad m)
-           => (Tensor d n a -> m (Tensor d k a))
-           -> Tensor d n a
-           -> Tensor d k a
-           -> m (Tensor d n a)
+numericBwd :: forall a d s1 s2 m
+           . (TensorScalar a, Device d, Shape s1, Shape s2,
+              Monad m)
+           => (Tensor d s1 a -> m (Tensor d s2 a))
+           -> Tensor d s1 a
+           -> Tensor d s2 a
+           -> m (Tensor d s1 a)
 numericBwd f inp upgrad = do
   let inplist = tensorToList inp
       upgradlist = tensorToList upgrad
@@ -55,16 +57,23 @@ numericBwd f inp upgrad = do
       finitediff i = do
         fph <- f (shift i h)
         fmh <- f (shift i (-h))
-        return $ (1/(2*h)) *^ (fph - fmh)
+        return $ unsafeRunExcept
+          (liftVec (\fph' fmh' -> (1/(2*h)) *^ (fph' - fmh')) fph fmh
+           :: Either IncompatibleShape (Tensor d s2 a))
       shift i offset = tensorFromList' (shape inp) [if j /= i then inplist!!j else inplist!!j + offset | j <- [0..insize-1]]
   listGrad <- forM [0..insize-1] $ \i -> do
     fdiff <- finitediff i
-    return $ fdiff <.> upgrad
+    return $ unsafeRunExcept $ do
+      case toAnyFixed (shape fdiff) of
+       AnyFixed fshp -> do
+         ffdiff <- shapeConvert fshp fdiff
+         fupgrad <- shapeConvert fshp upgrad
+         return $ ffdiff <.> fupgrad :: Either IncompatibleShape a
   return $ tensorFromList' (shape inp) listGrad
 
 genericNumericBwd :: forall inp out d m
                   . (ToTensor inp TestDevice, ToTensor out TestDevice,
-                     Scalar inp ~ Scalar out, Monad m, TensorScalar (Scalar inp))
+                     FixScalar inp ~ FixScalar out, Monad m, TensorScalar (FixScalar inp))
                   => (inp -> m out)
                   -> inp
                   -> out
@@ -81,7 +90,7 @@ genericNumericBwd f inp upgrad = do
   return $ fromTensor (tgrad,sinp)
 
 data ShapeInfo t a where
-  TensorShape :: (Shape (Dim n)) => Dim n -> ShapeInfo (Tensor d n a) a
+  TensorShape :: (Shape s) => s -> ShapeInfo (Tensor d s a) a
   ScalarShape :: ShapeInfo a a
   EmptyShape :: ShapeInfo (Weights a '[]) a
   HListShape :: ShapeInfo t1 a -> ShapeInfo (Weights a l) a -> ShapeInfo (Weights a (t1 ': l)) a
@@ -97,11 +106,11 @@ shapeSize (PairShape s1 s2) = shapeSize s1 + shapeSize s2
 shapeSize (ListShape ss) = sum $ fmap shapeSize ss
 
 class (Device d) => ToTensor t d where
-  toTensor :: Proxy d -> t -> (Tensor d 1 (Scalar t), ShapeInfo t (Scalar t))
-  fromTensor :: (Tensor d 1 (Scalar t), ShapeInfo t (Scalar t)) -> t
+  toTensor :: Proxy d -> t -> (Tensor d (Dim 1) (FixScalar t), ShapeInfo t (FixScalar t))
+  fromTensor :: (Tensor d (Dim 1) (FixScalar t), ShapeInfo t (FixScalar t)) -> t
 
-instance (TensorScalar a, Shape (Dim n), Device d) => ToTensor (Tensor d n a) d where
-  toTensor _ t = (flatten $ t, TensorShape $ shape t)
+instance (TensorScalar a, Shape s, Device d) => ToTensor (Tensor d s a) d where
+  toTensor _ t = (flatten t, TensorShape $ shape t)
   fromTensor (t, TensorShape shp) = reshape' shp $ t
 
 instance (Device d) => ToTensor CFloat d where
@@ -117,8 +126,8 @@ instance (Device d, TensorScalar a) => ToTensor (Weights a '[]) d where
   fromTensor _ = W Z
 
 instance forall a d e l
-         . (TensorScalar a, VectorSpace e, VectorSpace (Weights a l), Scalar e ~ a,
-            Scalar (Weights a l) ~ a, ToTensor e d, ToTensor (Weights a l) d)
+         . (TensorScalar a, FixShape e, FixShape (Weights a l), FixScalar e ~ a,
+            FixScalar (Weights a l) ~ a, ToTensor e d, ToTensor (Weights a l) d)
          => ToTensor (Weights a (e ': l)) d where
   toTensor p (W ((:.) e l)) =
     let (te,se) = toTensor p e
@@ -129,17 +138,17 @@ instance forall a d e l
     in W $ (:.) (fromTensor (te,se) :: e) (unWeights (fromTensor (tl,sl) :: Weights a l))
 
 instance forall a b d
-         . (ToTensor a d, ToTensor b d, Scalar a ~ Scalar b, TensorScalar (Scalar a))
+         . (ToTensor a d, ToTensor b d, FixScalar a ~ FixScalar b, TensorScalar (FixScalar a))
          => ToTensor (a,b) d where
   toTensor p (a,b) =
     let (ta,sa) = toTensor p a
         (tb,sb) = toTensor p b
-    in (tconcat' ta tb, PairShape sa sb :: ShapeInfo (a,b) (Scalar a))
+    in (tconcat' ta tb, PairShape sa sb :: ShapeInfo (a,b) (FixScalar a))
   fromTensor (t,PairShape sa sb) =
     let (ta,tb) = tsplitAt' (shapeSize sa) t
     in (fromTensor (ta,sa), fromTensor (tb,sb))
 
-instance (ToTensor a d, TensorScalar (Scalar a), Scalar a ~ Scalar [a])
+instance (ToTensor a d, TensorScalar (FixScalar a), FixScalar a ~ FixScalar [a])
          => ToTensor [a] d where
   toTensor _ [] = (tensorFromList' (0:.Z) [], ListShape [])
   toTensor p (x:xs) = let (tx, sx) = toTensor p x

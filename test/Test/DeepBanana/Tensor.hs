@@ -15,11 +15,11 @@ test_tensor = do
 test_broadcast :: Spec
 test_broadcast = describe "DeepBanana.Tensor TestDevice.broadcast" $ do
   it "Works in a simple example" $ do
-    let x = tensorFromList' (1:.3:.Z) [1,2,3] :: Tensor TestDevice 2 CFloat
+    let x = tensorFromList' (1:.3:.Z) [1,2,3] :: Tensor TestDevice (Dim 2) CFloat
         expected = tensorFromList' (3:.3:.Z) [1,2,3,
                                        1,2,3,
-                                       1,2,3] :: Tensor TestDevice 2 CFloat
+                                       1,2,3] :: Tensor TestDevice (Dim 2) CFloat
         actual = unsafeRunExcept (
-          broadcast (shape expected) x :: Either CudaExceptions (Tensor TestDevice 2 CFloat)
+          broadcast (shape expected) x :: Either CudaExceptions (Tensor TestDevice (Dim 2) CFloat)
           )
     actual `shouldBe` expected
