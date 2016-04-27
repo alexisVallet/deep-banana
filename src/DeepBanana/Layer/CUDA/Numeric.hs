@@ -4,8 +4,10 @@ module DeepBanana.Layer.CUDA.Numeric (
   , lexp
   , scale
   , scaleByCst
+  , scaleByCst_
   , multiply
   , add
+  , add_
   ) where
 
 import DeepBanana.Device
@@ -54,6 +56,12 @@ scaleByCst c = Layer $ \_ x -> do
   (y, bwd) <- forwardBackward scale (W Z) (c,x)
   return (y, \dy -> let (_,(_,dx)) = bwd dy in (W Z, dx))
 
+scaleByCst_ :: (Monad m, VectorSpace t)
+            => Scalar t -> Layer m (Scalar t) '[] t t
+scaleByCst_ c = combinePasses' fwdScaleByCst bwdScaleByCst
+  where fwdScaleByCst t = return $ c *^ t
+        bwdScaleByCst _ _ = return $ \dy -> c *^ dy
+
 multiply :: (Device d, MonadCudaError m, Shape s, TensorScalar a)
          => Layer m a '[] (Tensor d s a, Tensor d s a) (Tensor d s a)
 multiply = combinePasses' fwdMul bwdMul
@@ -69,3 +77,9 @@ add :: (Device d, MonadCudaError m, Shape s, TensorScalar a)
 add = combinePasses' fwdadd bwdadd
   where fwdadd (x,y) = liftFixed2 (+) x y
         bwdadd (x,y) _ = return $ \upgrad -> (upgrad, upgrad)
+
+add_ :: (Monad m, VectorSpace t)
+     => Layer m (Scalar t) '[] (t,t) t
+add_ = combinePasses' fwdadd bwdadd
+  where fwdadd (x,y) = return $ x ^+^ y
+        bwdadd _ _ = return $ \upgrad -> (upgrad, upgrad)
