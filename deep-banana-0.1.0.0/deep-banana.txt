@@ -843,9 +843,16 @@ instance DeepBanana.Tensor.TensorScalar.TensorScalar Foreign.C.Types.CFloat
 instance DeepBanana.Tensor.TensorScalar.TensorScalar Foreign.C.Types.CDouble
 
 
--- | Heterogenous lists. Used notably for: - Tensor shapes - Neural network
---   weights - Multi GPUs It is similar in principle and very much inspired
---   by Oleg Kiselyov's <a>HList package</a>.
+-- | Heterogenous lists. Used notably for:
+--   
+--   <ul>
+--   <li>Tensor shapes</li>
+--   <li>Neural network weights</li>
+--   <li>Multi GPU</li>
+--   </ul>
+--   
+--   It is similar in principle and very much inspired by Oleg Kiselyov's
+--   <a>HList package</a>.
 module DeepBanana.HList
 
 -- | An <tt><a>HList</a> l</tt> is an heterogenous list indexed by a
