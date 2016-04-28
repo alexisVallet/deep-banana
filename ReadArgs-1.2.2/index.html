@@ -1,0 +1,33 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>ReadArgs-1.2.2: Simple command line argument parsing</title><link href="ocean.css" rel="stylesheet" type="text/css" title="Ocean" /><script src="haddock-util.js" type="text/javascript"></script><script type="text/javascript">//<![CDATA[
+window.onload = function () {pageLoad();};
+//]]>
+</script></head><body><div id="package-header"><ul class="links" id="page-menu"><li><a href="index.html">Contents</a></li><li><a href="doc-index.html">Index</a></li></ul><p class="caption">ReadArgs-1.2.2: Simple command line argument parsing</p></div><div id="content"><div id="description"><h1>ReadArgs-1.2.2: Simple command line argument parsing</h1><div class="doc"><p>ReadArgs provides the <code>readArgs</code> IO action, which lets you tell the compiler
+to parse the command line arguments to fit the type signature you give.</p><p>For example <code>(a :: Int, b :: String, c :: Float) &lt;- readArgs</code> would
+parse the first runtime argument as an <code>Int</code>, the second as a <code>String</code> (no
+quotes required) and the third as a <code>Float</code>.</p><p>If the runtime arguments are incompatible with the type signature,
+then a simple usage statement is given of the types needed.</p><p>Continuing the previous example, if it was used in a
+program named <code>Example</code>, the error message for the above
+action would be:</p><pre>usage: Example Int String Float
+</pre><p>Any type that has both <code>Typeable</code> and <code>Read</code> instances
+can be used. <code>Char</code>, <code>String</code>, and <code>Text</code> are handled specially so that
+command line arguments for both do not require quotes (as their
+<code>Read</code> instances do). A special instance is provided for <code>FilePath</code> so
+that no constructor or quotes are required.</p><p><code>readArgs</code> also supports optional arguments and variadic arguments.
+Optional arguments are specified using <code>Maybe</code>, and variadic arguments
+using a list.  <code>(a :: Int, b :: Maybe String, c :: [Float]) &lt;- readArgs</code>
+would successfully parse any of the following sets of command line arguments:</p><pre>Example 1
+Example 1 2 3 4
+Example 1 foo
+Example 1 foo 2 3 4
+</pre><p>But not</p><pre>Example
+Example foo
+Example 1.0
+</pre><p>Usage statements for optional and variadic arguments use command-line
+parlance:</p><pre>usage: Example Int [String] [Float..]
+</pre><p>Note that both optional and variadic parsers are greedy by default
+(so <code>Example 1 2 3 4</code> was parsed as <code>(1, &quot;2&quot;, [3.0,4.0])</code>.  They
+may both be made non-greedy through use of the <code>NonGreedy</code> constructor:</p><pre>( a :: Int
+, NonGreedy b :: NonGreedy Maybe String
+, NonGreedy c :: NonGreedy [] Float
+) &lt;- readArgs
+</pre></div></div><div id="module-list"><p class="caption">Modules</p><ul><li><span class="module"><a href="ReadArgs.html">ReadArgs</a></span></li></ul></div></div><div id="footer"><p>Produced by <a href="http://www.haskell.org/haddock/">Haddock</a> version 2.16.1</p></div></body></html>
