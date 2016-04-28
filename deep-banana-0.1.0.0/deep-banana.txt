@@ -781,15 +781,16 @@ instance Control.Monad.State.Class.MonadState DeepBanana.Device.Generator m => D
 instance (DeepBanana.Layer.CUDA.Monad.MonadCudaError m, DeepBanana.Layer.CUDA.Monad.MonadCudaRand m) => DeepBanana.Layer.CUDA.Monad.MonadCuda m
 
 
--- | Defines datatype which can be used as scalar elements for a tensor.
---   Also exports much needed, although orphan instances for <a>CFloat</a>
---   and <a>CDouble</a>: <a>Generic</a>, <a>NFData</a> and
---   <tt>Serialize</tt>.
+-- | Defines datatypes which can be used as scalar elements for a tensor,
+--   providing the low-level GPU operations used to implement higher-level
+--   layers. Currently providing support for single precision
+--   <tt><a>CFloat</a></tt> and double precision <tt><a>CDouble</a></tt>
+--   datatype.
 module DeepBanana.Tensor.TensorScalar
 
 -- | Type class for tensor scalars. Basically requires them to be storable,
---   serializable, deepseqable numbers that can be handled by CUDA, Cublas,
---   CuDNN and Haskell. Basically requires low-level numeric routines.
+--   serializable, deepseqable numbers that can be handled by CUDA, CuDNN
+--   and Haskell.
 class (Floating a, Storable a, VectorSpace a, a ~ Scalar a, Serialize a, NFData a) => TensorScalar a
 
 -- | The corresponding CuDNN datatype.
@@ -834,6 +835,10 @@ data CFloat :: *
 
 -- | Haskell type representing the C <tt>double</tt> type.
 data CDouble :: *
+
+-- | Simple <tt><a>sizeOf</a></tt> wrapper with a <tt><a>Proxy</a> a</tt>
+--   instead of more dangerous <tt><a>undefined</a></tt>-like bottom
+--   values.
 mySizeOf :: Storable a => Proxy a -> Int
 instance GHC.Generics.Generic Foreign.C.Types.CFloat
 instance GHC.Generics.Generic Foreign.C.Types.CDouble
@@ -1055,13 +1060,15 @@ instance Data.Serialize.Serialize GHC.TypeLits.SomeNat
 --   the state token of some primitive state monad.
 module DeepBanana.Tensor.Mutable
 
--- | Mutable tensor, parametrized by some state token <tt>st</tt>.
+-- | Mutable tensor, parametrized by some state token <tt>st</tt>, stored
+--   on a device <tt>d</tt>, with shape <tt>s</tt> and scalar datatype
+--   <tt>a</tt>.
 data MTensor st d s a
 MTensor :: s -> ForeignPtr a -> MTensor st d s a
 [shape] :: MTensor st d s a -> s
 [dataptr] :: MTensor st d s a -> ForeignPtr a
 
--- | Convenient synonym for mutable tensors in the <a>IO</a> monad.
+-- | Convenient synonym for mutable tensors in the <tt>IO</tt> monad.
 type IOTensor = MTensor RealWorld
 
 -- | Returns the CuDNN datatype identifier for the tensor.
@@ -1069,7 +1076,9 @@ dtype :: (PrimMonad m, TensorScalar a) => MTensor (PrimState m) d n a -> m DataT
 
 -- | Creates an uninitialized mutable tensor with a given shape.
 --   Uninitialized means the contents of the tensor are defined by whatever
---   was lying around in memory at the time.
+--   was lying around in memory at the time. In case there is not enough
+--   space on the device, will throw and <tt><a>OutOfMemory</a></tt>
+--   exception after attempting garbage collection first.
 emptyTensor :: (Shape s, Device d, TensorScalar a, PrimMonad m, MonadError t m, Variant t OutOfMemory) => s -> m (MTensor (PrimState m) d s a)
 
 -- | Creates a mutable tensor from a list. Throws an exception at runtime
@@ -1086,8 +1095,13 @@ ones :: (PrimMonad m, Device d, Shape s, TensorScalar a, MonadError t m, Variant
 --   mutable tensor.
 withDevicePtr :: (Storable a) => IOTensor d s a -> (DevicePtr a -> IO b) -> IO b
 
--- | Tensor reshaping.
+-- | Tensor reshaping. Will throw and <tt><a>IncompatibleSize</a></tt>
+--   exception if the desired shape size does not correspond to the input
+--   tensor size.
 reshape :: (Shape s1, Shape s2, MonadError t m, Variant t IncompatibleSize) => s2 -> MTensor st d s1 a -> m (MTensor st d s2 a)
+
+-- | Unsafe pure tensor reshaping, which throws an imprecise exception when
+--   the desired shape size does not correspond to the input tensor size.
 reshape' :: (Shape s1, Shape s2) => s2 -> MTensor st d s1 a -> MTensor st d s2 a
 
 -- | Copies the data of a mutable tensor into a new one.
@@ -1109,8 +1123,13 @@ texp :: (PrimMonad m, Device d, Shape s, TensorScalar a) => MTensor (PrimState m
 inv :: (PrimMonad m, Device d, Shape s, TensorScalar a) => MTensor (PrimState m) d s a -> m ()
 
 
--- | GPU multi-dimensional dense numeric arrays.
+-- | Immutable GPU multi-dimensional dense numeric arrays.
 module DeepBanana.Tensor
+
+-- | An immutable, dense numerical array stored on GPU device <tt>d</tt>,
+--   with shape <tt>a</tt> and scalar datatype <tt>a</tt>. As long as the
+--   shape datatype is fixed at the type level, it is an instance of all
+--   standard numeric type classes in an elementwise fashion.
 data Tensor d s a
 Tensor :: s -> !(ForeignPtr a) -> Tensor d s a
 [shape] :: Tensor d s a -> s
@@ -1118,27 +1137,60 @@ Tensor :: s -> !(ForeignPtr a) -> Tensor d s a
 
 -- | Returns the CuDNN datatype of a tensor.
 dtype :: (TensorScalar a) => Tensor d s a -> DataType
-
--- | Reshaping.
-reshape :: (Shape s1, Shape s2, TensorScalar a, MonadError t m, Variant t IncompatibleSize) => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
-reshape' :: (Shape s1, Shape s2, TensorScalar a) => s2 -> Tensor d s1 a -> Tensor d s2 a
-shapeConvert :: (MonadError t m, Shape s1, Shape s2, Variant t IncompatibleShape) => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
-liftFixed1 :: (Shape s1) => (forall s2. (IsFixed s2) => Tensor d s2 a -> Tensor d s2 a) -> Tensor d s1 a -> Tensor d s1 a
-liftFixed2 :: (Shape s1, MonadError t m, Variant t IncompatibleShape) => (forall s2. (IsFixed s2) => Tensor d s2 a -> Tensor d s2 a -> Tensor d s2 a) -> Tensor d s1 a -> Tensor d s1 a -> m (Tensor d s1 a)
 transfer :: (DeviceTransfer t1 t2, MonadError t m, Variant t OutOfMemory) => t1 -> m t2
 transfer' :: (DeviceTransfer t1 t2) => t1 -> t2
 
 -- | Type-safe broadcasting.
 broadcast :: (Device d, Shape s1, Shape s2, TensorScalar a, MonadError t m, Variant t IncompatibleShape, Variant t OutOfMemory) => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
+
+-- | Unsafe version of <tt><a>broadcast</a></tt>, throws imprecise
+--   exceptions.
 broadcast' :: (Device d, Shape s1, Shape s2, TensorScalar a) => s2 -> Tensor d s1 a -> Tensor d s2 a
 
--- | Initializes a tensor with all zeros.
+-- | Returns a tensor with all zero coefficients. Throws an
+--   <tt><a>OutOfMemory</a></tt> exception when the desired device is out
+--   of memory.
 zeros :: (Device d, Shape s, TensorScalar a, MonadError t m, Variant t OutOfMemory) => s -> m (Tensor d s a)
+
+-- | Returns a tensor with all zero coefficients. Throws an imprecise
+--   exception when the desired device is out of memory.
 zeros' :: (Device d, Shape s, TensorScalar a) => s -> Tensor d s a
 
--- | Initializes a tensor with all ones.
+-- | Initializes a tensor with all ones. Throws an
+--   <tt><a>OutOfMemory</a></tt> exception when the desired device is out
+--   of memory.
 ones :: (Device d, Shape s, TensorScalar a, MonadError t m, Variant t OutOfMemory) => s -> m (Tensor d s a)
+
+-- | Returns a tensor with all one coefficients. Throws an imprecise
+--   exception when the desired device is out of memory.
 ones' :: (Device d, Shape s, TensorScalar a) => s -> Tensor d s a
+
+-- | Reshaping. Throws an <tt><a>IncompatibleSize</a></tt> exception when
+--   the desired size and the input size do not correspond.
+reshape :: (Shape s1, Shape s2, TensorScalar a, MonadError t m, Variant t IncompatibleSize) => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
+
+-- | Unsafe reshaping. Throws an imprecise exception when the desired size
+--   and the input size do not correspond.
+reshape' :: (Shape s1, Shape s2, TensorScalar a) => s2 -> Tensor d s1 a -> Tensor d s2 a
+
+-- | Shape conversion. This differs from <tt><a>reshape</a></tt> in that
+--   the desired shape and input shape must have exactly the same
+--   dimensions. This is useful when converting between dynamic and fixed
+--   shape datatypes. Throws an <tt><a>IncompatibleShape</a></tt> exception
+--   when the 2 shapes dimensions differ.
+shapeConvert :: (MonadError t m, Shape s1, Shape s2, Variant t IncompatibleShape) => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
+
+-- | Lifts a unary function on fixed shape tensors to work on any tensor.
+--   Useful to apply unary numeric functions such as <tt><a>log</a></tt> or
+--   <tt><a>exp</a></tt> to dynamic shape tensors in a type safe fashion.
+liftFixed1 :: (Shape s1) => (forall s2. (IsFixed s2) => Tensor d s2 a -> Tensor d s2 a) -> Tensor d s1 a -> Tensor d s1 a
+
+-- | Lifts a binary function on fixed shape tensors to work on any tensor.
+--   Throws an <tt><a>IncompatibleShape</a></tt> exception when the input
+--   tensors do not have the same shape. Useful to apply binary numeric
+--   functions such as <tt>'(+)'</tt> and <tt>'(*)'</tt> to dynamic shape
+--   tensors in a type safe fashion.
+liftFixed2 :: (Shape s1, MonadError t m, Variant t IncompatibleShape) => (forall s2. (IsFixed s2) => Tensor d s2 a -> Tensor d s2 a -> Tensor d s2 a) -> Tensor d s1 a -> Tensor d s1 a -> m (Tensor d s1 a)
 
 -- | Converts a mutable tensor into an immutable one in O(1) time. The data
 --   is not copied, so one should make sure the input mutable tensor is not
@@ -1154,6 +1206,9 @@ unsafeThaw :: (PrimMonad m) => Tensor d s a -> m (MTensor (PrimState m) d s a)
 --   not correspond to the size of the desired shape, throws an exception
 --   at run time.
 tensorFromList :: (Device d, Shape s, TensorScalar a, MonadError t m, Variant t IncompatibleSize, Variant t OutOfMemory) => s -> [a] -> m (Tensor d s a)
+
+-- | Unsafe version of <tt><a>tensorFromList</a></tt>, throws imprecise
+--   exceptions.
 tensorFromList' :: (Device d, Shape s, TensorScalar a) => s -> [a] -> Tensor d s a
 
 -- | Converts a tensor to a list.
@@ -1163,6 +1218,9 @@ tensorToList :: (Shape s, Device d, TensorScalar a) => Tensor d s a -> [a]
 --   runtime when the input's length does not correspond to the desired
 --   output size. Runs in O(n) time.
 fromVector :: (Device d, Shape s, TensorScalar a, MonadError t m, Variant t OutOfMemory, Variant t IncompatibleSize) => s -> SVector a -> m (Tensor d s a)
+
+-- | Unsafe version of <tt><a>fromVector</a></tt>, throws imprecise
+--   exceptions.
 fromVector' :: (Device d, Shape s, TensorScalar a) => s -> SVector a -> Tensor d s a
 
 -- | Converts a tensor to a storable vector. Runs in O(n) time.
@@ -1171,11 +1229,17 @@ toVector :: (Device d, Shape s, TensorScalar a) => Tensor d s a -> SVector a
 -- | Concatenates two 1-dimensional tensors. Inverse of tsplit. Runs in
 --   O(n+m) time.
 tconcat :: (Device d, TensorScalar a, MonadError t m, Variant t OutOfMemory) => Tensor d (Dim 1) a -> Tensor d (Dim 1) a -> m (Tensor d (Dim 1) a)
+
+-- | Unsafe version of <tt><a>tconcat</a></tt>, throws imprecise
+--   exceptions.
 tconcat' :: (Device d, TensorScalar a) => Tensor d (Dim 1) a -> Tensor d (Dim 1) a -> Tensor d (Dim 1) a
 
 -- | Splits a 1-dimensional tensor into 2 parts. Inverse of tconcat. Runs
 --   in O(n+m) time.
 tsplitAt :: (Device d, TensorScalar a, MonadError t m, Variant t OutOfMemory, Variant t IncompatibleSize) => Int -> Tensor d (Dim 1) a -> m (Tensor d (Dim 1) a, Tensor d (Dim 1) a)
+
+-- | Unsafe version of <tt><tt>tSplit</tt></tt>, throws imprecise
+--   exceptions.
 tsplitAt' :: (Device d, TensorScalar a) => Int -> Tensor d (Dim 1) a -> (Tensor d (Dim 1) a, Tensor d (Dim 1) a)
 
 -- | Computes the elementwise maximum of 2 tensors.
