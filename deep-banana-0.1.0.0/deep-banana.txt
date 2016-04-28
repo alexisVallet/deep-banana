@@ -936,26 +936,40 @@ instance GHC.Base.Monad m => DeepBanana.HList.HCategory (DeepBanana.Layer.InitLa
 -- | Shape datatypes for tensors.
 module DeepBanana.Tensor.Shape
 
--- | 'Dim n', where <tt>n</tt> is a type level natural, is a
---   <tt>n</tt>-dimensional shape where each dimension is dynamic.
+-- | <tt><a>Dim</a> n</tt>, where <tt>n</tt> is a type level natural, is a
+--   dynamic <tt>n</tt>-dimensional shape. It is represented by an
+--   <tt><a>HList</a></tt> of fixed size <tt>n</tt> where all elements are
+--   integers.
 type Dim (n :: Nat) = SizedList n Int
 
--- | 'Fixed l', where <tt>l</tt> is a type level list of type level natural
---   numbers, represents a shape which is fully fixed at the type level.
+-- | <tt><a>Fixed</a> l</tt>, where <tt>l</tt> is a type level list of type
+--   level natural numbers, represents a shape which is fully fixed at the
+--   type level. It is represented by an <tt><a>HList</a></tt> where all
+--   elements are <tt><a>Proxy</a> n</tt> for some type level natural
+--   <tt>n</tt>.
 type Fixed (l :: [Nat]) = HList (Fixed' l)
 
 -- | Type class that all shape datatypes implement.
 class (Eq s, Ord s, Show s, Serialize s, NFData s) => Shape s where nbdim = length . dimensions size s = case dimensions s of { [] -> 0 [i] -> i xs -> product xs }
+
+-- | Dimensions of the shape as a list of ints.
 dimensions :: Shape s => s -> [Int]
+
+-- | Smallest shape of the datatype, meaning it can be broadcasted against
+--   any other shape of the datatype.
 scalarShape :: Shape s => s
+
+-- | Number of dimensions.
 nbdim :: Shape s => s -> Int
+
+-- | Size, i.e. the product of the dimensions.
 size :: Shape s => s -> Int
 
 -- | Returns true if and only if the first shape argument can be
 --   broadcasted to to the second shape argument. Currently, broadcasting
 --   is limited to shapes holding the same number of dimensions. Then, a
 --   dimension <tt>d1</tt> is broadcastable to a dimension <tt>d2</tt> if
---   an only if 'd1 == d2' or 'd1 == 1'.
+--   an only if <tt>d1 == d2</tt> or <tt>d1 == 1</tt>.
 broadcastable :: (Shape s1, Shape s2) => s1 -> s2 -> Bool
 
 -- | Utility type class for shapes which are fully defined at the type
