@@ -11,6 +11,7 @@ module DeepBanana.Data (
   , batch_to_gpu
   , batch_to_gpu2
   , batch_to_gpu3
+  , batch_to_gpu4
   , batch_labels_to_gpu
   , runEvery
   , serializeTo
@@ -280,6 +281,36 @@ batch_to_gpu3 p1 p2 p3 shp1 shp2 = forever $ do
   tl2 <- fromVector shp2 l2
   tl3 <- fromVector shp2 l3
   yield ((tb1,tl1),(tb2,tl2),(tb3,tl3))
+
+batch_to_gpu4 :: (MonadIO m, MonadError t m, Variant t OutOfMemory,
+                  Variant t IncompatibleSize, TensorScalar a,
+                  Shape s1, Shape s2, Device d1, Device d2, Device d3,
+                  Device d4)
+              => Proxy d1
+              -> Proxy d2
+              -> Proxy d3
+              -> Proxy d4
+              -> s1
+              -> s2
+              -> Pipe (SVector a, SVector a)
+                      ((Tensor d1 s1 a, Tensor d1 s2 a),
+                       (Tensor d2 s1 a, Tensor d2 s2 a),
+                       (Tensor d3 s1 a, Tensor d3 s2 a),
+                       (Tensor d4 s1 a, Tensor d4 s2 a)) m ()
+batch_to_gpu4 p1 p2 p3 p4 shp1 shp2 = forever $ do
+  (b1, l1) <- await
+  (b2, l2) <- await
+  (b3, l3) <- await
+  (b4, l4) <- await
+  tb1 <- fromVector shp1 b1
+  tb2 <- fromVector shp1 b2
+  tb3 <- fromVector shp1 b3
+  tb4 <- fromVector shp1 b4
+  tl1 <- fromVector shp2 l1
+  tl2 <- fromVector shp2 l2
+  tl3 <- fromVector shp2 l3
+  tl4 <- fromVector shp2 l4
+  yield ((tb1,tl1),(tb2,tl2),(tb3,tl3),(tb4,tl4))
 
 
 batch_labels_to_gpu :: (MonadIO m, MonadError t m, Variant t OutOfMemory,

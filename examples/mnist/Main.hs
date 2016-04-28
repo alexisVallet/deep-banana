@@ -17,6 +17,7 @@ import Vision.Image.Storage.DevIL
 type Device0 = 0
 type Device1 = 1
 type Device2 = 2
+type Device3 = 3
 type ConvWeights d a = SizedList' 3 (Tensor d (Dim 4) a)
 
 conv :: (Device d, TensorScalar a, MonadCuda m)
@@ -80,6 +81,7 @@ main = do
       dev0 = Proxy :: Proxy Device0
       dev1 = Proxy :: Proxy Device1
       dev2 = Proxy :: Proxy Device2
+      dev3 = Proxy :: Proxy Device3
   putStrLn "Loading training set..."
   emnist_train <- runExceptT $ P.toListM
                   $ load_mnist (Just train_images_url) (Just train_labels_url)
@@ -100,12 +102,13 @@ main = do
              let baseNet = (id' *** layer model)
                            >+> mlrCost (batch_size:.nb_labels:.Z)
                            >+> toScalar
-             in dataPar dev0 baseNet (dataPar dev0 baseNet baseNet)
+             in dataPar dev0 baseNet (dataPar dev0 baseNet (dataPar dev0 baseNet baseNet))
+                >+> (id' *** (id' *** add_))
                 >+> (id' *** add_)
                 >+> add_
-                >+> scaleByCst_ (1/3)
-           cost_grad w ((b1,l1),(b2,l2),(b3,l3)) = do
-             ~(cost, bwd) <- forwardBackward trainModel w ((l1,b1),((l2,b2),(l3,b3)))
+                >+> scaleByCst_ (1/4)
+           cost_grad w ((b1,l1),(b2,l2),(b3,l3),(b4,l4)) = do
+             ~(cost, bwd) <- forwardBackward trainModel w ((l1,b1),((l2,b2),((l3,b3),(l4,b4))))
              return (cost, fst $ bwd (1 :: CFloat))
            predict w b = forward (layer model) w b
            nb_val_batches = length mnist_val `div` batch_size
@@ -141,7 +144,7 @@ main = do
        runEffect
          $ forever (randomize mnist_train)
          >-> preprocessing
-         >-> batch_to_gpu3 dev0 dev1 dev2 batch_shape labels_shape
+         >-> batch_to_gpu4 dev0 dev1 dev2 dev3 batch_shape labels_shape
          >-> sgd (momentum 0.05 0.9) cost_grad w_0
          >-> runEvery 1000 validate
          >-> print_info
