@@ -9,7 +9,7 @@
 <body>
 <pre><a name="line-1"></a><span class='hs-comment'>{-# LANGUAGE DataKinds, TypeOperators, TypeFamilies, GADTs, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, FlexibleInstances, ScopedTypeVariables #-}</span>
 <a name="line-2"></a><span class='hs-comment'>{-|
-<a name="line-3"></a>Heterogenous lists. Used notably for:
+<a name="line-3"></a>Heterogeneous lists. Used notably for:
 <a name="line-4"></a>
 <a name="line-5"></a>  - Tensor shapes
 <a name="line-6"></a>
@@ -20,13 +20,13 @@
 <a name="line-11"></a>It is similar in principle and very much inspired by Oleg Kiselyov's &lt;https://hackage.haskell.org/package/HList HList package&gt;.
 <a name="line-12"></a>-}</span>
 <a name="line-13"></a><span class='hs-keyword'>module</span> <span class='hs-conid'>DeepBanana</span><span class='hs-varop'>.</span><span class='hs-conid'>HList</span> <span class='hs-layout'>(</span>
-<a name="line-14"></a>  <span class='hs-comment'>-- * Heterogenous list datatypes</span>
+<a name="line-14"></a>  <span class='hs-comment'>-- * Heterogeneous list datatypes</span>
 <a name="line-15"></a>    <span class='hs-conid'>HList</span><span class='hs-layout'>(</span><span class='hs-keyglyph'>..</span><span class='hs-layout'>)</span>
 <a name="line-16"></a>  <span class='hs-layout'>,</span> <span class='hs-conid'>SizedList</span>
 <a name="line-17"></a>  <span class='hs-layout'>,</span> <span class='hs-conid'>SizedList'</span>
-<a name="line-18"></a>  <span class='hs-comment'>-- * Concatenating heterogenous lists</span>
+<a name="line-18"></a>  <span class='hs-comment'>-- * Concatenating heterogeneous lists</span>
 <a name="line-19"></a>  <span class='hs-layout'>,</span> <span class='hs-conid'>Concat</span><span class='hs-layout'>(</span><span class='hs-keyglyph'>..</span><span class='hs-layout'>)</span>
-<a name="line-20"></a>  <span class='hs-comment'>-- * Heterogenous categories and monoids</span>
+<a name="line-20"></a>  <span class='hs-comment'>-- * Heterogeneous categories and monoids</span>
 <a name="line-21"></a>  <span class='hs-layout'>,</span> <span class='hs-conid'>HCategory</span><span class='hs-layout'>(</span><span class='hs-keyglyph'>..</span><span class='hs-layout'>)</span>
 <a name="line-22"></a>  <span class='hs-layout'>,</span> <span class='hs-conid'>HMonoid</span><span class='hs-layout'>(</span><span class='hs-keyglyph'>..</span><span class='hs-layout'>)</span>
 <a name="line-23"></a>  <span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
@@ -40,11 +40,11 @@
 <a name="line-31"></a><span class='hs-keyword'>import</span> <span class='hs-conid'>Data</span><span class='hs-varop'>.</span><span class='hs-conid'>Serialize</span>
 <a name="line-32"></a>
 <a name="line-33"></a><span class='hs-keyword'>infixr</span> <span class='hs-num'>3</span> <span class='hs-conop'>:.</span>
-<a name="line-34"></a><span class='hs-comment'>-- | An @'HList' l@ is an heterogenous list indexed by a type-level list @l@ of its</span>
+<a name="line-34"></a><span class='hs-comment'>-- | An @'HList' l@ is an heterogeneous list indexed by a type-level list @l@ of its</span>
 <a name="line-35"></a><span class='hs-comment'>-- elements datatypes.</span>
 <a name="line-36"></a><span class='hs-comment'>--</span>
 <a name="line-37"></a><span class='hs-comment'>-- @</span>
-<a name="line-38"></a><span class='hs-comment'>-- 1:."Hi!":.(+):.Z :: HList '[Int,String,Float -&gt; Float]</span>
+<a name="line-38"></a><span class='hs-comment'>-- 1:."Hi!":.(+):.Z :: HList '[Int,String,Float -&gt; Float -&gt; Float]</span>
 <a name="line-39"></a><span class='hs-comment'>-- @</span>
 <a name="line-40"></a><span class='hs-keyword'>data</span> <span class='hs-varid'>family</span> <span class='hs-conid'>HList</span> <span class='hs-layout'>(</span><span class='hs-varid'>l</span> <span class='hs-keyglyph'>::</span> <span class='hs-keyglyph'>[</span><span class='hs-varop'>*</span><span class='hs-keyglyph'>]</span><span class='hs-layout'>)</span>
 <a name="line-41"></a><span class='hs-keyword'>data</span> <span class='hs-keyword'>instance</span> <span class='hs-conid'>HList</span> <span class='hs-chr'>'</span><span class='hs-conid'>[]</span> <span class='hs-keyglyph'>=</span> <span class='hs-conid'>Z</span>
@@ -97,7 +97,7 @@
 <a name="line-88"></a><a name="SizedList"></a><span class='hs-comment'>-- dimensions and fixed length, for instance.</span>
 <a name="line-89"></a><a name="SizedList"></a><span class='hs-keyword'>type</span> <span class='hs-conid'>SizedList</span> <span class='hs-layout'>(</span><span class='hs-varid'>n</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>Nat</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>a</span> <span class='hs-keyglyph'>::</span> <span class='hs-varop'>*</span><span class='hs-layout'>)</span> <span class='hs-keyglyph'>=</span> <span class='hs-conid'>HList</span> <span class='hs-layout'>(</span><span class='hs-conid'>SizedList'</span> <span class='hs-varid'>n</span> <span class='hs-varid'>a</span><span class='hs-layout'>)</span>
 <a name="line-90"></a>
-<a name="line-91"></a><a name="Concat"></a><span class='hs-comment'>-- | Concatenating and splitting heterogenous lists.</span>
+<a name="line-91"></a><a name="Concat"></a><span class='hs-comment'>-- | Concatenating and splitting heterogeneous lists.</span>
 <a name="line-92"></a><a name="Concat"></a><span class='hs-keyword'>class</span> <span class='hs-conid'>Concat</span> <span class='hs-layout'>(</span><span class='hs-varid'>l1</span> <span class='hs-keyglyph'>::</span> <span class='hs-keyglyph'>[</span><span class='hs-varop'>*</span><span class='hs-keyglyph'>]</span><span class='hs-layout'>)</span> <span class='hs-layout'>(</span><span class='hs-varid'>l2</span> <span class='hs-keyglyph'>::</span> <span class='hs-keyglyph'>[</span><span class='hs-varop'>*</span><span class='hs-keyglyph'>]</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
 <a name="line-93"></a>  <span class='hs-keyword'>type</span> <span class='hs-conid'>ConcatRes</span> <span class='hs-varid'>l1</span> <span class='hs-varid'>l2</span> <span class='hs-keyglyph'>::</span> <span class='hs-keyglyph'>[</span><span class='hs-varop'>*</span><span class='hs-keyglyph'>]</span>
 <a name="line-94"></a>  <span class='hs-varid'>hconcat</span> <span class='hs-keyglyph'>::</span> <span class='hs-conid'>HList</span> <span class='hs-varid'>l1</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-conid'>HList</span> <span class='hs-varid'>l2</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-conid'>HList</span> <span class='hs-layout'>(</span><span class='hs-conid'>ConcatRes</span> <span class='hs-varid'>l1</span> <span class='hs-varid'>l2</span><span class='hs-layout'>)</span>
@@ -124,14 +124,14 @@
 <a name="line-115"></a>    <span class='hs-varid'>return</span> <span class='hs-layout'>(</span><span class='hs-varid'>e2</span><span class='hs-conop'>:.</span><span class='hs-varid'>l2</span><span class='hs-layout'>)</span>
 <a name="line-116"></a>
 <a name="line-117"></a><span class='hs-keyword'>infixr</span> <span class='hs-num'>3</span> <span class='hs-varop'>&gt;+&gt;</span>
-<a name="line-118"></a><span class='hs-comment'>-- | Heterogenous category type class. Used to overload feed-forward composition</span>
+<a name="line-118"></a><span class='hs-comment'>-- | Heterogeneous category type class. Used to overload feed-forward composition</span>
 <a name="line-119"></a><span class='hs-comment'>-- across a few layer datatypes.</span>
 <a name="line-120"></a><span class='hs-keyword'>class</span> <span class='hs-conid'>HCategory</span> <span class='hs-layout'>(</span><span class='hs-varid'>cat</span> <span class='hs-keyglyph'>::</span> <span class='hs-keyglyph'>[</span><span class='hs-varop'>*</span><span class='hs-keyglyph'>]</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-varop'>*</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-varop'>*</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-varop'>*</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
 <a name="line-121"></a>  <span class='hs-varid'>id'</span> <span class='hs-keyglyph'>::</span> <span class='hs-varid'>cat</span> <span class='hs-chr'>'</span><span class='hs-conid'>[]</span> <span class='hs-varid'>a</span> <span class='hs-varid'>a</span>
 <a name="line-122"></a>  <span class='hs-layout'>(</span><span class='hs-varop'>&gt;+&gt;</span><span class='hs-layout'>)</span> <span class='hs-keyglyph'>::</span> <span class='hs-layout'>(</span><span class='hs-conid'>Concat</span> <span class='hs-varid'>l1</span> <span class='hs-varid'>l2</span><span class='hs-layout'>)</span> <span class='hs-keyglyph'>=&gt;</span> <span class='hs-varid'>cat</span> <span class='hs-varid'>l1</span> <span class='hs-varid'>a</span> <span class='hs-varid'>b</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-varid'>cat</span> <span class='hs-varid'>l2</span> <span class='hs-varid'>b</span> <span class='hs-varid'>c</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-varid'>cat</span> <span class='hs-layout'>(</span><span class='hs-conid'>ConcatRes</span> <span class='hs-varid'>l1</span> <span class='hs-varid'>l2</span><span class='hs-layout'>)</span> <span class='hs-varid'>a</span> <span class='hs-varid'>c</span>
 <a name="line-123"></a>
 <a name="line-124"></a><span class='hs-keyword'>infixr</span> <span class='hs-num'>3</span> <span class='hs-varop'>&lt;+&gt;</span>
-<a name="line-125"></a><span class='hs-comment'>-- | Heterogenous monoid type class. Used to overload heterogenous list concatenation</span>
+<a name="line-125"></a><span class='hs-comment'>-- | Heterogeneous monoid type class. Used to overload heterogeneous list concatenation</span>
 <a name="line-126"></a><span class='hs-comment'>-- for weights datatypes notably.</span>
 <a name="line-127"></a><span class='hs-keyword'>class</span> <span class='hs-conid'>HMonoid</span> <span class='hs-layout'>(</span><span class='hs-varid'>t</span> <span class='hs-keyglyph'>::</span> <span class='hs-keyglyph'>[</span><span class='hs-varop'>*</span><span class='hs-keyglyph'>]</span> <span class='hs-keyglyph'>-&gt;</span> <span class='hs-varop'>*</span><span class='hs-layout'>)</span> <span class='hs-keyword'>where</span>
 <a name="line-128"></a>  <span class='hs-varid'>hmempty</span> <span class='hs-keyglyph'>::</span> <span class='hs-varid'>t</span> <span class='hs-chr'>'</span><span class='hs-conid'>[]</span>
