@@ -900,10 +900,25 @@ instance DeepBanana.Device.DeviceTransfer (DeepBanana.HList.HList '[]) (DeepBana
 instance (DeepBanana.Device.DeviceTransfer (DeepBanana.HList.HList l1) (DeepBanana.HList.HList l2), DeepBanana.Device.DeviceTransfer e1 e2) => DeepBanana.Device.DeviceTransfer (DeepBanana.HList.HList (e1 : l1)) (DeepBanana.HList.HList (e2 : l2))
 instance DeepBanana.HList.HMonoid DeepBanana.HList.HList
 
+
+-- | Weights for neural networks as heterogenous lists.
 module DeepBanana.Weights
+
+-- | Weights for a neural network. Represents the weights as the
+--   concatenated <tt><a>HList</a></tt> of the individual layer's weights.
+--   The <tt>a</tt> parameter represents the weights scalar datatype, used
+--   for <tt><a>FixShape</a></tt> and <tt><a>VectorSpace</a></tt>
+--   instances.
 newtype Weights (a :: *) l
 W :: HList l -> Weights l
 [unWeights] :: Weights l -> HList l
+
+-- | Class for datatypes which are not <tt><a>Floating</a></tt> nor
+--   <tt><a>VectorSpace</a></tt> instances themselves, but can be lifted to
+--   fixed-shape versions which are through an error monad. Somewhat ad-hoc
+--   class Used to implement stochastic gradient descent in
+--   <tt><a>Optimize</a></tt> for non fixed shape datatypes in a type safe
+--   manner.
 class (Floating (FixScalar t)) => FixShape t where type family FixScalar t :: *
 liftVec :: (FixShape t, MonadError e m, Variant e IncompatibleShape) => (forall t'. (Floating t', VectorSpace t', Scalar t' ~ FixScalar t) => t' -> t' -> t') -> t -> t -> m t
 instance GHC.Classes.Eq (DeepBanana.HList.HList l) => GHC.Classes.Eq (DeepBanana.Weights.Weights a l)
