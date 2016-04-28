@@ -8,6 +8,9 @@
 @package deep-banana
 @version 0.1.0.0
 
+
+-- | Custom Prelude, based on <tt><tt>ClassyPrelude</tt></tt> and exporting
+--   more of mtl, pipe, base and vector-space packages for convenience.
 module DeepBanana.Prelude
 
 module DeepBanana.Device.Monad
@@ -463,20 +466,54 @@ broadcast_copyDouble :: CInt -> CSize -> DevicePtr CDouble -> DevicePtr CInt -> 
 freeDevicePtr :: FunPtr (Ptr a -> IO ())
 freeCuRANDGenerator :: FunPtr (Ptr () -> IO ())
 
+
+-- | A stab at an extensible exceptions system, used internally. To be
+--   displaced eventually by whatever "composable effects" library becomes
+--   the de facto standard in the Haskell community.
 module DeepBanana.Exception
-data WithStack e
-withStack :: (?loc :: CallStack) => e -> WithStack e
+
+-- | Coproduct of datatypes, indexed by a type-level lists of these
+--   datatypes. For instance, <tt><a>Coproduct</a> '[a,b]</tt> is
+--   equivalent to <tt><a>Either</a> a b</tt>.
 data Coproduct (l :: [*])
 Left' :: a -> Coproduct (a : l)
 Right' :: Coproduct l -> Coproduct (a : l)
+
+-- | Type class to deal with variant datatypes in a generic fashion.
 class Variant t e
 setVariant :: Variant t e => e -> t
 getVariant :: Variant t e => t -> Maybe e
+
+-- | Throwing an exception when the error datatype is a variant including
+--   that datatype.
 throwVariant :: (MonadError t m, Variant t e) => e -> m a
+
+-- | Catching one possible exception type out of a variant.
 catchVariant :: (MonadError t m, Variant t e) => m a -> (e -> m a) -> m a
+
+-- | Simple wrapper adding a call stack to an arbitrary exception.
+data WithStack e
+withStack :: (?loc :: CallStack) => e -> WithStack e
+
+-- | Gets the <tt><a>Right</a></tt> part of a computation, throwing an
+--   imprecise exception in case of <tt><a>Left</a></tt>.
 unsafeRunExcept :: (Exception e) => Either e a -> a
+
+-- | Embeds an <tt><a>Either</a></tt> value into an arbitrary error monad.
 embedExcept :: (MonadError e m) => Either e a -> m a
+
+-- | Synonym for <tt><a>ExceptT</a></tt> specifying the exception type via
+--   a <tt><a>Proxy</a></tt>. Useful to disambiguate types for the
+--   compiler.
 runExceptTAs :: Proxy t -> ExceptT t m a -> m (Either t a)
+
+-- | Runs a computation, and in case of a specific exception being raised
+--   performs garbage collection before attempting the computation again.
+--   This is useful when allocating a lot of memory quickly on the GPU, as
+--   the garbage collector may not have enough time to run by itself.
+--   Throws back the same exception if the second run fails anyway. This is
+--   used anytime an allocation is performed on a GPU device, most notably
+--   <tt><a>emptyTensor</a></tt> and other tensor creation functions.
 attemptGCThenRetryOn :: (MonadIO m, MonadError t m, Variant t e) => Proxy e -> m a -> m a
 instance GHC.Generics.Selector DeepBanana.Exception.S1_0_1WithStack
 instance GHC.Generics.Selector DeepBanana.Exception.S1_0_0WithStack
@@ -1127,7 +1164,7 @@ inv :: (PrimMonad m, Device d, Shape s, TensorScalar a) => MTensor (PrimState m)
 module DeepBanana.Tensor
 
 -- | An immutable, dense numerical array stored on GPU device <tt>d</tt>,
---   with shape <tt>a</tt> and scalar datatype <tt>a</tt>. As long as the
+--   with shape <tt>s</tt> and scalar datatype <tt>a</tt>. As long as the
 --   shape datatype is fixed at the type level, it is an instance of all
 --   standard numeric type classes in an elementwise fashion.
 data Tensor d s a
@@ -1137,8 +1174,6 @@ Tensor :: s -> !(ForeignPtr a) -> Tensor d s a
 
 -- | Returns the CuDNN datatype of a tensor.
 dtype :: (TensorScalar a) => Tensor d s a -> DataType
-transfer :: (DeviceTransfer t1 t2, MonadError t m, Variant t OutOfMemory) => t1 -> m t2
-transfer' :: (DeviceTransfer t1 t2) => t1 -> t2
 
 -- | Type-safe broadcasting.
 broadcast :: (Device d, Shape s1, Shape s2, TensorScalar a, MonadError t m, Variant t IncompatibleShape, Variant t OutOfMemory) => s2 -> Tensor d s1 a -> m (Tensor d s2 a)
