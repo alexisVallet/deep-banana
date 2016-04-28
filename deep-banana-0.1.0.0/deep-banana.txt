@@ -842,14 +842,38 @@ instance Data.Serialize.Serialize Foreign.C.Types.CDouble
 instance DeepBanana.Tensor.TensorScalar.TensorScalar Foreign.C.Types.CFloat
 instance DeepBanana.Tensor.TensorScalar.TensorScalar Foreign.C.Types.CDouble
 
+
+-- | Heterogenous lists. Used notably for: - Tensor shapes - Neural network
+--   weights - Multi GPUs It is similar in principle and very much inspired
+--   by Oleg Kiselyov's <a>HList package</a>.
 module DeepBanana.HList
+
+-- | An <tt><a>HList</a> l</tt> is an heterogenous list indexed by a
+--   type-level list <tt>l</tt> of its elements datatypes.
+--   
+--   <pre>
+--   1:."Hi!":.(+):.Z :: HList '[Int,String,Float -&gt; Float]
+--   </pre>
+
+-- | Fixed size homogeneous list datatype. Useful to define shapes with
+--   dynamic dimensions and fixed length, for instance.
 type SizedList (n :: Nat) (a :: *) = HList (SizedList' n a)
+
+-- | Helper type family for <tt><a>SizedList</a></tt>.
+
+-- | Concatenating and splitting heterogenous lists.
 class Concat (l1 :: [*]) (l2 :: [*]) where type family ConcatRes l1 l2 :: [*]
 hconcat :: Concat l1 l2 => HList l1 -> HList l2 -> HList (ConcatRes l1 l2)
 hsplit :: Concat l1 l2 => HList (ConcatRes l1 l2) -> (HList l1, HList l2)
+
+-- | Heterogenous category type class. Used to overload feed-forward
+--   composition across a few layer datatypes.
 class HCategory (cat :: [*] -> * -> * -> *)
 id' :: HCategory cat => cat '[] a a
 (>+>) :: (HCategory cat, Concat l1 l2) => cat l1 a b -> cat l2 b c -> cat (ConcatRes l1 l2) a c
+
+-- | Heterogenous monoid type class. Used to overload heterogenous list
+--   concatenation for weights datatypes notably.
 class HMonoid (t :: [*] -> *)
 hmempty :: HMonoid t => t '[]
 (<+>) :: (HMonoid t, Concat l1 l2) => t l1 -> t l2 -> t (ConcatRes l1 l2)
