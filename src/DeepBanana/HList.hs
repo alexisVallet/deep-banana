@@ -1,11 +1,27 @@
 {-# LANGUAGE DataKinds, TypeOperators, TypeFamilies, GADTs, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, FlexibleInstances, ScopedTypeVariables #-}
+{-|
+Heterogeneous lists. Used notably for:
+
+  - Tensor shapes
+
+  - Neural network weights
+
+  - Multi GPU
+
+It is similar in principle and very much inspired by Oleg Kiselyov's <https://hackage.haskell.org/package/HList HList package>.
+-}
 module DeepBanana.HList (
+  -- * Heterogeneous list datatypes
     HList(..)
   , SizedList
   , SizedList'
+  -- * Concatenating heterogeneous lists
   , Concat(..)
+  -- * Heterogeneous categories and monoids
   , HCategory(..)
   , HMonoid(..)
+  -- * Internals
+  , HDeviceTransfer(..)
   ) where
 
 import Control.Applicative
@@ -13,10 +29,18 @@ import qualified Control.Monad.RWS.Strict as S
 import qualified Control.Monad.State.Strict as S
 import qualified Control.Monad.Writer.Strict as S
 import DeepBanana.Device
+import DeepBanana.Exception
 import DeepBanana.Prelude hiding (get, put)
+import DeepBanana.Tensor.Exception
 import Data.Serialize
 
 infixr 3 :.
+-- | An @'HList' l@ is an heterogeneous list indexed by a type-level list @l@ of its
+-- elements datatypes.
+--
+-- @
+-- 1:."Hi!":.(+):.Z :: HList '[Int,String,Float -> Float -> Float]
+-- @
 data family HList (l :: [*])
 data instance HList '[] = Z
 data instance HList (e ': l) = (:.) e (HList l)
@@ -59,14 +83,16 @@ instance (Serialize e, Serialize (HList l)) => Serialize (HList (e ': l)) where
     l <- get
     return $ e :. l
 
--- fixed size homogeneous lists
+-- | Helper type family for @'SizedList'@.
 type family SizedList' (n :: Nat) (a :: *) where
   SizedList' 0 a = '[]
   SizedList' n a = (a ': SizedList' (n - 1) a)
 
+-- | Fixed size homogeneous list datatype. Useful to define shapes with dynamic
+-- dimensions and fixed length, for instance.
 type SizedList (n :: Nat) (a :: *) = HList (SizedList' n a)
 
--- concatenating heterogeneous lists
+-- | Concatenating and splitting heterogeneous lists.
 class Concat (l1 :: [*]) (l2 :: [*]) where
   type ConcatRes l1 l2 :: [*]
   hconcat :: HList l1 -> HList l2 -> HList (ConcatRes l1 l2)
@@ -82,22 +108,37 @@ instance (Concat l1 l2) => Concat (e ': l1) l2 where
   hconcat (e :. l1) l2 = e :. hconcat l1 l2
   hsplit (e :. l1andl2) = let (l1,l2) = hsplit l1andl2 in (e :. l1, l2)
 
-instance DeviceTransfer (HList '[]) (HList '[]) where
-  transfer = return
+class (Device d) => HDeviceTransfer (l :: [*]) d where
+  type HTransferred l d :: [*]
+  htransfer :: (MonadError e m, Variant e OutOfMemory)
+            => d -> HList l -> m (HList (HTransferred l d))
 
-instance (DeviceTransfer (HList l1) (HList l2), DeviceTransfer e1 e2)
-         => DeviceTransfer (HList (e1 ': l1)) (HList (e2 ': l2)) where
-  transfer (e1:.l1) = do
-    e2 <- transfer e1
-    l2 <- transfer l1
-    return (e2:.l2)
+instance (Device d) => HDeviceTransfer '[] d where
+  type HTransferred '[] d = '[]
+  htransfer _ l = return l
+
+instance (DeviceTransfer e d, HDeviceTransfer l d)
+         => HDeviceTransfer (e ': l) d where
+  type HTransferred (e ': l) d = Transferred e d ': HTransferred l d
+  htransfer dev (e:.l) = do
+    e' <- transfer dev e
+    l' <- htransfer dev l
+    return $ e':.l'
+
+instance (HDeviceTransfer l d) => DeviceTransfer (HList l) d where
+  type Transferred (HList l) d = HList (HTransferred l d)
+  transfer = htransfer
 
 infixr 3 >+>
+-- | Heterogeneous category type class. Used to overload feed-forward composition
+-- across a few layer datatypes.
 class HCategory (cat :: [*] -> * -> * -> *) where
   id' :: cat '[] a a
   (>+>) :: (Concat l1 l2) => cat l1 a b -> cat l2 b c -> cat (ConcatRes l1 l2) a c
 
 infixr 3 <+>
+-- | Heterogeneous monoid type class. Used to overload heterogeneous list concatenation
+-- for weights datatypes notably.
 class HMonoid (t :: [*] -> *) where
   hmempty :: t '[]
   (<+>) :: (Concat l1 l2) => t l1 -> t l2 -> t (ConcatRes l1 l2)

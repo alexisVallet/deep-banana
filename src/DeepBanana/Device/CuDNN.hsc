@@ -1,5 +1,5 @@
 {-|
-FFI wrapper around CuDNN.
+FFI wrapper for CuDNN. Naming simply removes the cudnn or cudnn_ prefixes of wrapped functions. Pointers referring to device arrays are wrapped as @'DevicePtr'@, while those referring to host arrays as regular @'Ptr'@. Output types are wrapped as @'DeviceM'@ to ensure they are executed with a specific device. See <https://developer.nvidia.com/cudnn CuDNN's documentation> for documentation of each individual function.
 |-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -50,21 +50,22 @@ newtype Handle d = Handle {
   } deriving Storable
 
 foreign import ccall safe "cudnnCreate"
-  createHandle :: Ptr (Ptr ()) -> DeviceM d Status
+  createHandle :: Ptr (Ptr ()) -> IO Status
 
 foreign import ccall safe "cudnnDestroy"
-  destroyHandle :: Ptr () -> DeviceM d Status
+  destroyHandle :: Ptr () -> IO Status
 
-getRawHandle :: (Device d) => Proxy d -> Ptr ()
+getRawHandle :: Integer -> Ptr ()
 {-# NOINLINE getRawHandle #-}
 getRawHandle = memo $ \p -> unsafePerformIO $ do
   h <- alloca $ \hptr -> do
-    runDeviceM p $ createHandle hptr
+    createHandle hptr
     peek hptr
   return h
 
-handle :: forall d . (Device d) => Handle d
-handle = Handle $ getRawHandle (Proxy :: Proxy d)
+-- | Returns a CuDNN handle for any specific device. This function is memoized.
+handle :: (Device d) => d -> Handle d
+handle dev = Handle $ getRawHandle $ fromIntegral $ deviceId dev
 
 -- Getting and setting stream.
 foreign import ccall safe "cudnnSetStream"

@@ -1,3 +1,6 @@
+{-|
+Custom Prelude, based on @'ClassyPrelude'@ and exporting more of mtl, pipe, base and vector-space packages for convenience.
+-}
 module DeepBanana.Prelude (
     module ClassyPrelude
   , module Control.Category
@@ -22,6 +25,7 @@ module DeepBanana.Prelude (
   , module Foreign.C
   , module GHC.Generics
   , module GHC.TypeLits
+  , module Numeric.Natural
   , module Pipes
   , module System.Directory
   ) where
@@ -135,5 +139,6 @@ import Foreign hiding (void)
 import Foreign.C
 import GHC.Generics (Generic(..))
 import GHC.TypeLits
+import Numeric.Natural
 import Pipes hiding (Proxy, for, ListT, runListT, Enumerable)
 import System.Directory

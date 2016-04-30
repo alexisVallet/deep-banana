@@ -1,4 +1,7 @@
 {-# LANGUAGE UndecidableInstances, RankNTypes, GADTs #-}
+{-|
+Monad transformers for CUDA computations.
+-}
 module DeepBanana.Layer.CUDA.Monad (
     CudaErrorT
   , CudaError
@@ -24,7 +27,6 @@ module DeepBanana.Layer.CUDA.Monad (
   , embedCudaErrorFromST
   ) where
 
-import Control.Lens
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad.Primitive (unsafePrimToPrim)
 
@@ -58,6 +60,7 @@ type CudaExceptions = Coproduct '[
                       , OutOfMemory
                       , IncompatibleShape
                       , IncompatibleSize
+                      , IncompatibleDevice
                       , EmptyBatch
                       ]
 

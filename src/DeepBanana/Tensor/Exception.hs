@@ -1,4 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, ImplicitParams, DeriveGeneric #-}
+{-|
+Exception datatypes for Tensor functions.
+-}
 module DeepBanana.Tensor.Exception (
     OutOfMemory
   , outOfMemory
@@ -6,6 +9,8 @@ module DeepBanana.Tensor.Exception (
   , incompatibleSize
   , IncompatibleShape
   , incompatibleShape
+  , IncompatibleDevice
+  , incompatibleDevice
   ) where
 
 import GHC.Stack
@@ -30,3 +35,9 @@ newtype IncompatibleShape = IncompatibleShape (WithStack String)
 
 incompatibleShape :: (?loc :: CallStack) => String -> IncompatibleShape
 incompatibleShape = IncompatibleShape . withStack
+
+newtype IncompatibleDevice = IncompatibleDevice (WithStack String)
+                             deriving (Eq, Show, Typeable, Exception, Generic, NFData)
+
+incompatibleDevice :: (?loc :: CallStack) => String -> IncompatibleDevice
+incompatibleDevice = IncompatibleDevice . withStack

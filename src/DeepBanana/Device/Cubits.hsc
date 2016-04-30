@@ -1,6 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-|
-FFI wrapper to custom CUDA code needed for for HNN.
+FFI wrapper to custom CUDA code provided by the c library hnn_cubits.
 -}
 module DeepBanana.Device.Cubits where
 

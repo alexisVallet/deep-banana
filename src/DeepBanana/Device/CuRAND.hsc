@@ -1,5 +1,8 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-|
+FFI wrapper for CuRAND. Naming simply removes the curand or curand_ prefixes of wrapped functions. Pointers referring to device arrays are wrapped as @'DevicePtr'@, while those referring to host arrays as regular @'Ptr'@. Output types are wrapped as @'DeviceM'@ to ensure they are executed with a specific device. See <http://docs.nvidia.com/cuda/curand CuRAND's documentation> for documentation of each individual function.
+-}
 module DeepBanana.Device.CuRAND where
 
 import Foreign

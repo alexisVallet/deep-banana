@@ -36,7 +36,8 @@ data Update t m w = Update {
   , run :: forall a . t m a -> m a
   }
 
-vanilla :: (FixShape w, MonadError e m, Variant e IncompatibleShape)
+vanilla :: (FixShape w, MonadError e m, Variant e IncompatibleShape,
+            Variant e IncompatibleDevice)
         => FixScalar w -> Update IdentityT m w
 vanilla lr = Update {
     update = \_ grad w_t ->
@@ -44,7 +45,8 @@ vanilla lr = Update {
   , run = runIdentityT
   }
 
-momentum :: (FixShape w, MonadError e m, Variant e IncompatibleShape)
+momentum :: (FixShape w, MonadError e m, Variant e IncompatibleShape,
+             Variant e IncompatibleDevice)
          => FixScalar w -> FixScalar w -> Update (StateT (Maybe w)) m w
 momentum lr mfactor = Update {
     update = \cost grad w_t -> do
@@ -62,15 +64,18 @@ class (Monad m, FixShape t) => HasElemwiseMax m t where
   elemwiseMax :: t -> FixScalar t -> m t
 
 instance (MonadError t m, Variant t OutOfMemory, Variant t IncompatibleShape,
-          Shape s, Device d, TensorScalar a)
+          Variant t IncompatibleDevice, Shape s, Device d, TensorScalar a)
          => HasElemwiseMax m (Tensor d s a) where
   elemwiseMax t x = do
     case toAnyFixed $ shape t of
      AnyFixed fshp -> do
        ft <- shapeConvert fshp t
-       ones <- ones fshp
-       res <- elementwiseMax ft $ x *^ ones
-       shapeConvert (shape t) res
+       withValidUniqueDevice (device t) $ \dev' -> do
+         dft <- deviceConvert dev' ft
+         ones <- ones dev' (shape ft)
+         dfres <- elementwiseMax dft $ x *^ ones
+         dres <- shapeConvert (shape t) dfres
+         deviceConvert (device t) dres
 
 instance (MonadError t m, Variant t IncompatibleShape, Floating s)
          => HasElemwiseMax m (Weights s '[]) where
@@ -86,7 +91,7 @@ instance forall m s l e
     return $ W $ (:.) head $ unWeights tail
 
 rmsprop :: (MonadError e m, Variant e OutOfMemory, Variant e IncompatibleShape,
-            HasElemwiseMax m w, FixShape w)
+            Variant e IncompatibleDevice, HasElemwiseMax m w, FixShape w)
         => FixScalar w -> FixScalar w -> FixScalar w
         -> Update (StateT (Maybe w)) m w
 rmsprop lr msqrFact maxRate = Update {

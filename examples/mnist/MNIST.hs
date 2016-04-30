@@ -2,10 +2,10 @@
 module MNIST where
 
 import qualified Data.Binary.Get as Bin
+import Control.Lens
 import DeepBanana
 import DeepBanana.Prelude
 import Codec.Compression.GZip
-import Control.Lens hiding (index)
 import qualified Data.Attoparsec.ByteString as AP
 import qualified Network.Wreq as Wreq
 import System.Directory

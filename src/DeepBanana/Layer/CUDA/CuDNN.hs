@@ -81,7 +81,8 @@ convolution2d padding stride fwdAlgo bwdDataAlgo bwdFilterAlgo =
           embedCudaFromST $ do
             filters' <- unsafeThaw filters
             fmaps' <- unsafeThaw fmaps
-            convres <- convolution2dFwd CuDNN.handle padding stride fwdAlgo fmaps' filters'
+            convres <- convolution2dFwd (CuDNN.handle $ device fmaps)
+                       padding stride fwdAlgo fmaps' filters'
             unsafeFreeze convres
         convbwd (W ((:.) filters Z)) fmaps out = do
           let bwdfilters upgrad =
@@ -89,14 +90,16 @@ convolution2d padding stride fwdAlgo bwdDataAlgo bwdFilterAlgo =
                   filters' <- unsafeThaw filters
                   fmaps' <- unsafeThaw fmaps
                   upgrad' <- unsafeThaw upgrad
-                  filtersgrad <- convolution2dBwdFilters CuDNN.handle bwdFilterAlgo padding stride fmaps' filters' upgrad'
+                  filtersgrad <- convolution2dBwdFilters (CuDNN.handle $ device fmaps)
+                                 bwdFilterAlgo padding stride fmaps' filters' upgrad'
                   unsafeFreeze filtersgrad
               bwdinputs upgrad =
                 unsafeRunCudaError $ embedCudaErrorFromST $ do
                   filters' <- unsafeThaw filters
                   fmaps' <- unsafeThaw fmaps
                   upgrad' <- unsafeThaw upgrad
-                  inputsgrad <- convolution2dBwdInputs CuDNN.handle bwdDataAlgo padding stride fmaps' filters' upgrad'
+                  inputsgrad <- convolution2dBwdInputs (CuDNN.handle $ device fmaps)
+                                bwdDataAlgo padding stride fmaps' filters' upgrad'
                   unsafeFreeze inputsgrad
           return $ broadcast' (shape out)
             >>> \upgrad -> (W $ bwdfilters upgrad :. Z, bwdinputs upgrad)
@@ -108,7 +111,7 @@ bias = combinePasses biasFwd biasBwd
           _:.c:._ <- return $ shape batch
           bias_w' <- unsafeThaw bias_w >>= MT.reshape (1:.c:.1:.1:.Z)
           batch' <- unsafeThaw batch
-          out <- biasForward CuDNN.handle bias_w' batch'
+          out <- biasForward (CuDNN.handle $ device batch) bias_w' batch'
           unsafeFreeze out
         biasBwd _ _ out =
           case shape out of
@@ -117,7 +120,7 @@ bias = combinePasses biasFwd biasBwd
                       >>> \upgrad ->
                            let biasgrad = unsafeRunCudaError $ embedCudaErrorFromST $ do
                                  upgrad' <- unsafeThaw upgrad
-                                 grad <- biasBackward CuDNN.handle upgrad' >>= MT.reshape (c:.Z)
+                                 grad <- biasBackward (CuDNN.handle $ device out) upgrad' >>= MT.reshape (c:.Z)
                                  unsafeFreeze grad
                            in (W ((:.) biasgrad Z), upgrad)
 
@@ -130,7 +133,7 @@ activation mode =
         actfwd fmaps = do
           embedCudaFromST $ do
             fmaps' <- unsafeThaw $ to4 fmaps
-            activations <- activationFwd CuDNN.handle mode fmaps'
+            activations <- activationFwd (CuDNN.handle $ device fmaps) mode fmaps'
             fmap (reshape' (shape fmaps)) $ unsafeFreeze activations
         actbwd inp out = do
           return $ broadcast' (shape out) >>>
@@ -138,7 +141,7 @@ activation mode =
               inp' <- unsafeThaw $ to4 inp
               out' <- unsafeThaw $ to4 out
               upgrad' <- unsafeThaw $ to4 upgrad
-              grad <- activationBwd CuDNN.handle mode inp' out' upgrad'
+              grad <- activationBwd (CuDNN.handle $ device inp) mode inp' out' upgrad'
               fmap (reshape' (shape inp)) $ unsafeFreeze grad
 
 -- pooling
@@ -153,7 +156,8 @@ pooling2d psize padding stride mode =
   where poolfwd fmaps = do
           embedCudaFromST $ do
             fmaps' <- unsafeThaw fmaps
-            poolres <- pooling2dFwd CuDNN.handle psize padding stride mode fmaps'
+            poolres <- pooling2dFwd (CuDNN.handle $ device fmaps)
+                       psize padding stride mode fmaps'
             unsafeFreeze poolres
         poolbwd inp out = do
           return $ broadcast' (shape out) >>> \
@@ -161,7 +165,8 @@ pooling2d psize padding stride mode =
               inp' <- unsafeThaw inp
               out' <- unsafeThaw out
               upgrad' <- unsafeThaw upgrad
-              grad <- pooling2dBwd CuDNN.handle psize padding stride mode inp' out' upgrad'
+              grad <- pooling2dBwd (CuDNN.handle $ device inp)
+                      psize padding stride mode inp' out' upgrad'
               unsafeFreeze grad
 
 softmax :: forall m d a . (Device d, MonadCuda m, TensorScalar a)
@@ -172,7 +177,7 @@ softmax algorithm mode = combinePasses' softmaxFwd softmaxBwd
   where softmaxFwd input = embedCudaFromST $ do
           let rows:.cols:.Z = shape input
           input' <- unsafeThaw input >>= MT.reshape (rows:.cols:.1:.1:.Z)
-          out <- softmaxForward CuDNN.handle algorithm mode input'
+          out <- softmaxForward (CuDNN.handle $ device input) algorithm mode input'
           unsafeFreeze out >>= reshape (rows:.cols:.Z)
         softmaxBwd inp out =
           return $ broadcast' (shape out) >>>
@@ -180,7 +185,8 @@ softmax algorithm mode = combinePasses' softmaxFwd softmaxBwd
               let rows:.cols:.Z = shape inp
               mu <- unsafeThaw upgrad >>= MT.reshape (rows:.cols:.1:.1:.Z)
               mout <- unsafeThaw out >>= MT.reshape (rows:.cols:.1:.1:.Z)
-              mgrad <- softmaxBackward CuDNN.handle algorithm mode mout mu
+              mgrad <- softmaxBackward (CuDNN.handle $ device inp)
+                       algorithm mode mout mu
               unsafeFreeze mgrad >>= reshape (rows:.cols:.Z)
 
 nchw_to_nhwc :: forall d m a . (Device d, MonadCuda m, TensorScalar a)
@@ -189,13 +195,13 @@ nchw_to_nhwc = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
           embedCudaFromST $ do
             mt <- unsafeThaw t
-            mt' <- nchw_to_nhwc' CuDNN.handle mt
+            mt' <- nchw_to_nhwc' (CuDNN.handle $ device t) mt
             unsafeFreeze mt'
         bwdTrans _ out = do
           return $ broadcast' (shape out) >>>
             \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               mu <- unsafeThaw upgrad
-              mu' <- nhwc_to_nchw' CuDNN.handle mu
+              mu' <- nhwc_to_nchw' (CuDNN.handle $ device out) mu
               unsafeFreeze mu'
 
 nhwc_to_nchw :: forall d m a . (Device d, MonadCuda m, TensorScalar a)
@@ -204,27 +210,30 @@ nhwc_to_nchw = combinePasses' fwdTrans bwdTrans
   where fwdTrans t = do
           embedCudaFromST $ do
             mt <- unsafeThaw t
-            mt' <- nhwc_to_nchw' CuDNN.handle mt
+            mt' <- nhwc_to_nchw' (CuDNN.handle $ device t) mt
             unsafeFreeze mt'
         bwdTrans _ out = do
           return $ broadcast' (shape out) >>>
             \upgrad -> unsafeRunCudaError $ embedCudaErrorFromST $ do
               mu <- unsafeThaw upgrad
-              mu' <- nchw_to_nhwc' CuDNN.handle mu
+              mu' <- nchw_to_nhwc' (CuDNN.handle $ device out) mu
               unsafeFreeze mu'
 
 batchNormalization :: forall d m a
                    . (Device d, MonadCudaError m, TensorScalar a)
                    => CuDNN.BatchNormMode
                    -> Double
-                   -> Layer m a '[Tensor d (Dim 4) a, Tensor d (Dim 4) a] (Tensor d (Dim 4) a) (Tensor d (Dim 4) a)
+                   -> Layer m a
+                   '[Tensor d (Dim 4) a, Tensor d (Dim 4) a]
+                   (Tensor d (Dim 4) a) (Tensor d (Dim 4) a)
 batchNormalization mode epsilon = combinePasses fwdBN bwdBN
   where fwdBN (W (scale:.bias:.Z)) x = embedCudaErrorFromST $ do
           (mscale, mbias, mx) <- pure (,,)
                                  <*> unsafeThaw scale
                                  <*> unsafeThaw bias
                                  <*> unsafeThaw x
-          my <- batchNormalizationForward CuDNN.handle mode epsilon mx mscale mbias
+          my <- batchNormalizationForward (CuDNN.handle $ device x)
+                mode epsilon mx mscale mbias
           unsafeFreeze my
         bwdBN (W (scale:.bias:.Z)) x y = do
           return $ broadcast' (shape y)
@@ -233,8 +242,8 @@ batchNormalization mode epsilon = combinePasses fwdBN bwdBN
                                <*> unsafeThaw x
                                <*> unsafeThaw dy
                                <*> unsafeThaw scale
-            (mdx,mdscale,mdbias) <- batchNormalizationBackward CuDNN.handle mode epsilon
-                                    mx mdy mscale
+            (mdx,mdscale,mdbias) <- batchNormalizationBackward (CuDNN.handle $ device x)
+                                    mode epsilon mx mdy mscale
             (dx,dscale,dbias) <- pure (,,)
                                  <*> unsafeFreeze mdx
                                  <*> unsafeFreeze mdscale
@@ -267,7 +276,7 @@ withTensor4d :: forall m t d a b
              -> m b
 withTensor4d tensor action = do
   datatype <- MT.dtype tensor
-  withTensorDesc (Proxy :: Proxy d) CuDNN.nchw datatype (MT.shape tensor) $
+  withTensorDesc (MT.device tensor) CuDNN.nchw datatype (MT.shape tensor) $
     \tensordesc -> do
       eres <- liftIO $ withDevicePtr tensor
               $ \dvcptr -> runExceptT $ action tensordesc dvcptr
@@ -275,22 +284,22 @@ withTensor4d tensor action = do
 
 withTensorDesc :: (Device d, MonadIO m, MonadError t m, Variant t AllocFailed,
                    Variant t BadParam, Variant t NotSupported, ?loc :: CallStack)
-               => Proxy d
+               => d
                -> CuDNN.TensorFormat
                -> CuDNN.DataType
                -> Dim 4
                -> (CuDNN.TensorDescriptor -> ExceptT t IO a)
                -> m a
-withTensorDesc p format dtype (n:.c:.h:.w:.Z) action = do
+withTensorDesc dev format dtype (n:.c:.h:.w:.Z) action = do
   let [n',c',h',w'] = fmap fromIntegral [n,c,h,w]
       create4d descptr = handleStatus (Proxy :: Proxy AllocFailed)
-                         $ liftIO $ runDeviceM p
+                         $ liftIO $ runDeviceM dev
                          $ CuDNN.createTensorDescriptor descptr
       set4d d = handleStatus (Proxy :: Proxy BadParam)
                 $ handleStatus (Proxy :: Proxy NotSupported)
-                $ liftIO $ runDeviceM p
+                $ liftIO $ runDeviceM dev
                 $ CuDNN.setTensor4dDescriptor d CuDNN.nchw dtype n' c' h' w'
-      destroy4d desc = liftIO $ runDeviceM p $ CuDNN.destroyTensorDescriptor desc
+      destroy4d desc = liftIO $ runDeviceM dev $ CuDNN.destroyTensorDescriptor desc
   withDescriptor create4d set4d destroy4d
     $ \descptr -> do
       eres <- liftIO $ runExceptT $ action descptr
@@ -304,15 +313,15 @@ withFilter4d :: forall d m t a b
              -> (CuDNN.FilterDescriptor -> CUDA.DevicePtr a -> ExceptT t IO b)
              -> m b
 withFilter4d tensor action = do
+  let dev = MT.device tensor
   datatype <- MT.dtype tensor
-  let p = Proxy :: Proxy d
-      [n,c,h,w] = fmap fromIntegral $ dimensions $ MT.shape tensor
+  let [n,c,h,w] = fmap fromIntegral $ dimensions $ MT.shape tensor
       createFilter = handleStatus (Proxy :: Proxy AllocFailed)
-                     . liftIO . runDeviceM p . CuDNN.createFilterDescriptor
+                     . liftIO . runDeviceM dev . CuDNN.createFilterDescriptor
       setFilter d = handleStatus (Proxy :: Proxy BadParam)
-                    $ liftIO $ runDeviceM p
+                    $ liftIO $ runDeviceM dev
                     $ CuDNN.setFilter4dDescriptor d datatype n c h w
-      destroyFilter = liftIO . runDeviceM p . CuDNN.destroyFilterDescriptor
+      destroyFilter = liftIO . runDeviceM dev . CuDNN.destroyFilterDescriptor
   withDescriptor createFilter setFilter destroyFilter
     $ \filtdesc -> do
       eres <- liftIO $ withDevicePtr tensor
@@ -321,40 +330,40 @@ withFilter4d tensor action = do
 
 withConvDesc :: (Device d, MonadIO m, MonadError t m, Variant t AllocFailed,
                  Variant t BadParam, Variant t NotSupported, ?loc :: CallStack)
-             => Proxy d -> (Int,Int) -> (Int,Int) -> (Int,Int)
+             => d -> (Int,Int) -> (Int,Int) -> (Int,Int)
              -> (CuDNN.ConvolutionDescriptor -> m a) -> m a
-withConvDesc p (padh,padw) (strh,strw) (uph,upw) action = do
+withConvDesc dev (padh,padw) (strh,strw) (uph,upw) action = do
   let [cpadh,cpadw,cstrh,cstrw,cupw,cuph] =
         map fromIntegral [padh,padw,strh,strw,uph,upw]
       createConv = handleStatus (Proxy :: Proxy AllocFailed)
-                   . liftIO . runDeviceM p . CuDNN.createConvolutionDescriptor
+                   . liftIO . runDeviceM dev . CuDNN.createConvolutionDescriptor
       setConv d = handleStatus (Proxy :: Proxy BadParam)
                   $ handleStatus (Proxy :: Proxy NotSupported)
-                  $ liftIO $ runDeviceM p
+                  $ liftIO $ runDeviceM dev
                   $ CuDNN.setConvolution2dDescriptor d cpadh cpadw cstrh cstrw cupw cuph
                   CuDNN.convolution
-      destroyConv = liftIO . runDeviceM p . CuDNN.destroyConvolutionDescriptor
+      destroyConv = liftIO . runDeviceM dev . CuDNN.destroyConvolutionDescriptor
   withDescriptor createConv setConv destroyConv action
 
 withPoolDesc :: (Device d, MonadIO m, MonadError t m, Variant t AllocFailed,
                  Variant t BadParam, ?loc :: CallStack)
-             => Proxy d
+             => d
              -> (Int, Int)
              -> (Int, Int)
              -> (Int, Int)
              -> CuDNN.PoolingMode
              -> (CuDNN.PoolingDescriptor -> m a)
              -> m a
-withPoolDesc p (wh,ww) (padh,padw) (strh,strw) mode action = do
+withPoolDesc dev (wh,ww) (padh,padw) (strh,strw) mode action = do
   let [cwh,cww,cpadh,cpadw,cstrh,cstrw] =
         fmap fromIntegral [wh,ww,padh,padw,strh,strw]
       createPool = handleStatus (Proxy :: Proxy AllocFailed)
-                   . liftIO . runDeviceM p . CuDNN.createPoolingDescriptor
+                   . liftIO . runDeviceM dev . CuDNN.createPoolingDescriptor
       setPool d = handleStatus (Proxy :: Proxy BadParam)
-                  $ liftIO $ runDeviceM p
+                  $ liftIO $ runDeviceM dev
                   $ CuDNN.setPooling2dDescriptor d mode cwh cww cpadh cpadw
                   cstrh cstrw
-      destroyPool = liftIO . runDeviceM p . CuDNN.destroyPoolingDescriptor
+      destroyPool = liftIO . runDeviceM dev . CuDNN.destroyPoolingDescriptor
   withDescriptor createPool setPool destroyPool action
 
 convOutShape :: Dim 4 -> Dim 4 -> (Int,Int) -> (Int,Int) -> Dim 4
@@ -376,28 +385,28 @@ convolution2dFwd :: forall m d a
 convolution2dFwd handle (padh,padw) (strh,strw) algo fmaps filters = do
   -- make the descriptors
   let outshp = convOutShape (MT.shape fmaps) (MT.shape filters) (padh,padw) (strh,strw)
-      p = Proxy :: Proxy d
+      dev = MT.device fmaps
   embedCudaError unsafeIOToPrim $ do
-    withConvDesc p (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
+    withConvDesc dev (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
       withTensor4d (unsafeCoerce fmaps :: IOTensor d (Dim 4) a)
         $ \inputdesc inputptr -> do
         withFilter4d (unsafeCoerce filters :: IOTensor d (Dim 4) a)
           $ \filtersdesc filtersptr -> do
-          output <- emptyTensor outshp :: CudaErrorT IO (IOTensor d (Dim 4) a)
+          output <- emptyTensor dev outshp :: CudaErrorT IO (IOTensor d (Dim 4) a)
           withTensor4d output $ \outputdesc outputptr -> do
             -- allocate workspace
             wkspcsizeptr <- liftIO $ malloc
             workspacesize <- do
               handleStatus (Proxy :: Proxy BadParam)
                 $ handleStatus (Proxy :: Proxy NotSupported)
-                $ liftIO $ runDeviceM p $ CuDNN.getConvolutionForwardWorkspaceSize
+                $ liftIO $ runDeviceM dev $ CuDNN.getConvolutionForwardWorkspaceSize
                 handle inputdesc filtersdesc convdesc outputdesc algo
                 wkspcsizeptr
               liftIO $ peek wkspcsizeptr
             liftIO $ free wkspcsizeptr
             workspace <- attemptGCThenRetryOn (Proxy :: Proxy MemoryAllocation)
                          $ handleCUDAException (Proxy :: Proxy MemoryAllocation)
-                         $ runDeviceM p
+                         $ runDeviceM dev
                          $ CUDA.mallocArray (fromIntegral workspacesize)
             -- allocate alpha and beta
             alpha <- liftIO $ newArray [1]
@@ -407,14 +416,14 @@ convolution2dFwd handle (padh,padw) (strh,strw) algo fmaps filters = do
               $ handleStatus (Proxy :: Proxy NotSupported)
               $ handleStatus (Proxy :: Proxy MappingError)
               $ handleStatus (Proxy :: Proxy ExecutionFailed)
-              $ liftIO $ runDeviceM p
+              $ liftIO $ runDeviceM dev
               $ CuDNN.convolutionForward
               handle alpha inputdesc inputptr filtersdesc filtersptr
               convdesc algo workspace workspacesize beta outputdesc
               outputptr
             liftIO $ free alpha
             liftIO $ free beta
-            liftIO $ runDeviceM p $ CUDA.free workspace
+            liftIO $ runDeviceM dev $ CUDA.free workspace
           return $ unsafeCoerce output
 
 convolution2dBwdFilters :: forall m d a
@@ -428,8 +437,8 @@ convolution2dBwdFilters :: forall m d a
                         -> MTensor (PrimState m) d (Dim 4) a
                         -> m (MTensor (PrimState m) d (Dim 4) a)
 convolution2dBwdFilters handle algo (padh,padw) (strh,strw) fmaps filters upgrad = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
-  withConvDesc p (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
+  let dev = MT.device fmaps
+  withConvDesc dev (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
     withTensor4d (unsafeCoerce fmaps :: IOTensor d (Dim 4) a)
       $ \inputdesc inputptr -> do
       withTensor4d (unsafeCoerce upgrad :: IOTensor d (Dim 4) a)
@@ -437,28 +446,28 @@ convolution2dBwdFilters handle algo (padh,padw) (strh,strw) fmaps filters upgrad
         alpha <- liftIO $ newArray [1]
         beta <- liftIO $ newArray [0]
         -- compute gradient with regards to the filters
-        filtersgrad <- emptyTensor $ MT.shape filters :: CudaErrorT IO (IOTensor d (Dim 4) a)
+        filtersgrad <- emptyTensor dev $ MT.shape filters :: CudaErrorT IO (IOTensor d (Dim 4) a)
         withFilter4d filtersgrad $ \filtersgraddesc filtersgradptr -> do
           workspacesizeptr <- liftIO $ malloc
           handleStatus (Proxy :: Proxy BadParam)
             $ handleStatus (Proxy :: Proxy NotSupported)
-            $ liftIO $ runDeviceM p
+            $ liftIO $ runDeviceM dev
             $ CuDNN.getConvolutionBackwardFilterWorkspaceSize handle inputdesc upgraddesc
             convdesc filtersgraddesc algo workspacesizeptr
           workspacesize <- liftIO $ peek workspacesizeptr
           liftIO $ free workspacesizeptr
           workspace <- attemptGCThenRetryOn (Proxy :: Proxy MemoryAllocation)
                        $ handleCUDAException (Proxy :: Proxy MemoryAllocation)
-                       $ runDeviceM p
+                       $ runDeviceM dev
                        $ CUDA.mallocArray (fromIntegral workspacesize)
           handleStatus (Proxy :: Proxy BadParam)
             $ handleStatus (Proxy :: Proxy NotSupported)
             $ handleStatus (Proxy :: Proxy MappingError)
             $ handleStatus (Proxy :: Proxy ExecutionFailed)
-            $ liftIO $ runDeviceM p
+            $ liftIO $ runDeviceM dev
             $ CuDNN.convolutionBackwardFilter handle alpha inputdesc inputptr
             upgraddesc upgradptr convdesc algo workspace workspacesize beta filtersgraddesc filtersgradptr
-          liftIO $ runDeviceM p $ CUDA.free workspace
+          liftIO $ runDeviceM dev $ CUDA.free workspace
         liftIO $ free alpha
         liftIO $ free beta
         return $ unsafeCoerce filtersgrad
@@ -474,8 +483,8 @@ convolution2dBwdInputs :: forall m d a
                        -> MTensor (PrimState m) d (Dim 4) a
                        -> m (MTensor (PrimState m) d (Dim 4) a)
 convolution2dBwdInputs handle algo (padh,padw) (strh,strw) fmaps filters upgrad = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
-  withConvDesc p (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
+  let dev = MT.device fmaps
+  withConvDesc dev (padh,padw) (strh,strw) (1,1) $ \convdesc -> do
     withFilter4d (unsafeCoerce filters :: IOTensor d (Dim 4) a)
       $ \filtersdesc filtersptr -> do
       withTensor4d (unsafeCoerce upgrad :: IOTensor d (Dim 4) a)
@@ -483,28 +492,28 @@ convolution2dBwdInputs handle algo (padh,padw) (strh,strw) fmaps filters upgrad 
         alpha <- liftIO $ newArray [1]
         beta <- liftIO $ newArray [0]
         -- compute gradient with regards to the input feature maps
-        inputsgrad <- emptyTensor $ MT.shape fmaps :: CudaErrorT IO (IOTensor d (Dim 4) a)
+        inputsgrad <- emptyTensor dev $ MT.shape fmaps :: CudaErrorT IO (IOTensor d (Dim 4) a)
         withTensor4d inputsgrad $ \inputsgraddesc inputsgradptr -> do
           workspacesizeptr <- liftIO $ malloc
           handleStatus (Proxy :: Proxy BadParam)
             $ handleStatus (Proxy :: Proxy NotSupported)
-            $ liftIO $ runDeviceM p
+            $ liftIO $ runDeviceM dev
             $ CuDNN.getConvolutionBackwardDataWorkspaceSize handle filtersdesc
             upgraddesc convdesc inputsgraddesc algo workspacesizeptr
           workspacesize <- liftIO $ peek workspacesizeptr
           liftIO $ free workspacesizeptr
           workspace <- attemptGCThenRetryOn (Proxy :: Proxy MemoryAllocation)
                        $ handleCUDAException (Proxy :: Proxy MemoryAllocation)
-                       $ runDeviceM p
+                       $ runDeviceM dev
                        $ CUDA.mallocArray (fromIntegral workspacesize)
           handleStatus (Proxy :: Proxy BadParam)
             $ handleStatus (Proxy :: Proxy NotSupported)
             $ handleStatus (Proxy :: Proxy MappingError)
             $ handleStatus (Proxy :: Proxy ExecutionFailed)
-            $ liftIO $ runDeviceM p
+            $ liftIO $ runDeviceM dev
             $ CuDNN.convolutionBackwardData handle alpha filtersdesc filtersptr
             upgraddesc upgradptr convdesc algo workspace workspacesize beta inputsgraddesc inputsgradptr
-          liftIO $ runDeviceM p $ CUDA.free workspace
+          liftIO $ runDeviceM dev $ CUDA.free workspace
         liftIO $ free alpha
         liftIO $ free beta
         return $ unsafeCoerce inputsgrad
@@ -517,15 +526,15 @@ biasForward :: forall m d a
             -> MTensor (PrimState m) d (Dim 4) a
             -> m (MTensor (PrimState m) d (Dim 4) a)
 biasForward handle bias batch = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
+  let dev = MT.device batch
   withTensor4d (unsafeCoerce bias :: IOTensor d (Dim 4) a) $ \biasdesc biasptr -> do
-    out <- MT.copy (unsafeCoerce batch :: IOTensor d (Dim 4) a) :: CudaErrorT IO (IOTensor d (Dim 4) a)
+    out <- MT.copy dev (unsafeCoerce batch :: IOTensor d (Dim 4) a) :: CudaErrorT IO (IOTensor d (Dim 4) a)
     withTensor4d out $ \outdesc outptr -> do
       (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [1]
       handleStatus (Proxy :: Proxy NotSupported)
         $ handleStatus (Proxy :: Proxy BadParam)
         $ handleStatus (Proxy :: Proxy ExecutionFailed)
-        $ liftIO $ runDeviceM p
+        $ liftIO $ runDeviceM dev
         $ CuDNN.addTensor handle alpha biasdesc biasptr beta outdesc outptr
       liftIO $ free alpha >> free beta
     return $ unsafeCoerce out
@@ -536,14 +545,14 @@ biasBackward :: forall m d a
              -> MTensor (PrimState m) d (Dim 4) a
              -> m (MTensor (PrimState m) d (Dim 4) a)
 biasBackward handle upgrad = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
+  let dev = MT.device upgrad
   withTensor4d (unsafeCoerce upgrad :: IOTensor d (Dim 4) a)$ \upgraddesc upgradptr -> do
     let _:.c:._ = MT.shape upgrad
-    biasgrad <- emptyTensor $ 1:.c:.1:.1:.Z :: CudaErrorT IO (IOTensor d (Dim 4) a)
+    biasgrad <- emptyTensor dev $ 1:.c:.1:.1:.Z :: CudaErrorT IO (IOTensor d (Dim 4) a)
     withTensor4d biasgrad $ \biasgraddesc biasgradptr -> do
       (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]
       handleStatus (Proxy :: Proxy BadParam)
-        $ liftIO $ runDeviceM p
+        $ liftIO $ runDeviceM dev
         $ CuDNN.convolutionBackwardBias handle alpha upgraddesc upgradptr
         beta biasgraddesc biasgradptr
       liftIO $ free alpha >> free beta
@@ -557,15 +566,15 @@ activationFwd :: forall m d a
               -> MTensor (PrimState m) d (Dim 4) a
               -> m (MTensor (PrimState m) d (Dim 4) a)
 activationFwd handle mode input = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
+  let dev = MT.device input
   withTensor4d (unsafeCoerce input :: IOTensor d (Dim 4) a) $ \inputdesc inputptr -> do
-    output <- emptyTensor $ MT.shape input :: CudaErrorT IO (IOTensor d (Dim 4) a)
+    output <- emptyTensor dev $ MT.shape input :: CudaErrorT IO (IOTensor d (Dim 4) a)
     withTensor4d output $ \outputdesc outputptr -> do
       alpha <- liftIO $ newArray [1]
       beta <- liftIO $ newArray [0]
       handleStatus (Proxy :: Proxy BadParam)
         $ handleStatus (Proxy :: Proxy ExecutionFailed)
-        $ liftIO $ runDeviceM p
+        $ liftIO $ runDeviceM dev
         $ CuDNN.activationForward handle mode alpha inputdesc
         inputptr beta outputdesc outputptr
       liftIO $ free alpha
@@ -581,10 +590,10 @@ activationBwd :: forall m d a
               -> MTensor (PrimState m) d (Dim 4) a
               -> m (MTensor (PrimState m) d (Dim 4) a)
 activationBwd handle mode input output upgrad = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
+  let dev = MT.device input
   withTensor4d (unsafeCoerce input :: IOTensor d (Dim 4) a) $ \inputdesc inputptr -> do
     withTensor4d (unsafeCoerce upgrad :: IOTensor d (Dim 4) a) $ \upgraddesc upgradptr -> do
-      grad <- emptyTensor $ MT.shape input :: CudaErrorT IO (IOTensor d (Dim 4) a)
+      grad <- emptyTensor dev $ MT.shape input :: CudaErrorT IO (IOTensor d (Dim 4) a)
       withTensor4d (unsafeCoerce output :: IOTensor d (Dim 4) a) $ \outputdesc outputptr -> do
         withTensor4d grad $ \graddesc gradptr -> do
           alpha <- liftIO $ newArray [1]
@@ -592,7 +601,7 @@ activationBwd handle mode input output upgrad = embedCudaError unsafeIOToPrim $ 
           handleStatus (Proxy :: Proxy BadParam)
             $ handleStatus (Proxy :: Proxy NotSupported)
             $ handleStatus (Proxy :: Proxy ExecutionFailed)
-            $ liftIO $ runDeviceM p
+            $ liftIO $ runDeviceM dev
             $ CuDNN.activationBackward handle mode alpha inputdesc inputptr
             upgraddesc upgradptr outputdesc outputptr beta graddesc
             gradptr
@@ -624,12 +633,12 @@ pooling2dFwd :: forall m d a
              -> m (MTensor (PrimState m) d (Dim 4) a)
 pooling2dFwd handle size padding stride mode input = do
   let outshp = pooling2dOutputShape size padding stride $ MT.shape input
-      p = Proxy :: Proxy d
+      dev = MT.device input
   embedCudaError unsafeIOToPrim $ do
-    withPoolDesc p size padding stride mode $ \pooldesc -> do
+    withPoolDesc dev size padding stride mode $ \pooldesc -> do
       withTensor4d (unsafeCoerce input :: IOTensor d (Dim 4) a)
         $ \inputdesc inputptr -> do
-        output <- emptyTensor outshp :: CudaErrorT IO (IOTensor d (Dim 4) a)
+        output <- emptyTensor dev outshp :: CudaErrorT IO (IOTensor d (Dim 4) a)
         -- actual pooling
         withTensor4d output $ \outputdesc outputptr -> do
           alpha <- liftIO $ newArray [1]
@@ -637,7 +646,7 @@ pooling2dFwd handle size padding stride mode input = do
           handleStatus (Proxy :: Proxy BadParam)
             $ handleStatus (Proxy :: Proxy NotSupported)
             $ handleStatus (Proxy :: Proxy ExecutionFailed)
-            $ liftIO $ runDeviceM p
+            $ liftIO $ runDeviceM dev
             $ CuDNN.poolingForward handle pooldesc alpha inputdesc
             inputptr beta outputdesc outputptr
           liftIO $ free alpha
@@ -656,22 +665,22 @@ pooling2dBwd :: forall m d a
              -> MTensor (PrimState m) d (Dim 4) a
              -> m (MTensor (PrimState m) d (Dim 4) a)
 pooling2dBwd handle size padding stride mode inp out upgrad = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
-  withPoolDesc p size padding stride mode $ \pooldesc -> do
+  let dev = MT.device inp
+  withPoolDesc dev size padding stride mode $ \pooldesc -> do
     withTensor4d (unsafeCoerce inp :: IOTensor d (Dim 4) a)
       $ \inpdesc inpptr -> do
       withTensor4d (unsafeCoerce out :: IOTensor d (Dim 4) a)
         $ \outdesc outptr -> do
         withTensor4d (unsafeCoerce upgrad :: IOTensor d (Dim 4) a)
           $ \upgraddesc upgradptr -> do
-          grad <- emptyTensor $ MT.shape inp :: CudaErrorT IO (IOTensor d (Dim 4) a)
+          grad <- emptyTensor dev $ MT.shape inp :: CudaErrorT IO (IOTensor d (Dim 4) a)
           withTensor4d grad $ \graddesc gradptr -> do
             alpha <- liftIO $ newArray [1]
             beta <- liftIO $ newArray [0]
             handleStatus (Proxy :: Proxy BadParam)
               $ handleStatus (Proxy :: Proxy NotSupported)
               $ handleStatus (Proxy :: Proxy ExecutionFailed)
-              $ liftIO $ runDeviceM p
+              $ liftIO $ runDeviceM dev
               $ CuDNN.poolingBackward handle pooldesc alpha outdesc outptr
               upgraddesc upgradptr inpdesc inpptr beta graddesc gradptr
           return $ unsafeCoerce grad
@@ -685,14 +694,14 @@ softmaxForward :: forall m d a
                -> MTensor (PrimState m) d (Dim 4) a
                -> m (MTensor (PrimState m) d (Dim 4) a)
 softmaxForward handle algorithm mode input = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
+  let dev = MT.device input
   withTensor4d (unsafeCoerce input :: IOTensor d (Dim 4) a) $ \inpdesc inpptr -> do
-    out <- MT.emptyTensor $ MT.shape input :: CudaErrorT IO (IOTensor d (Dim 4) a)
+    out <- MT.emptyTensor dev $ MT.shape input :: CudaErrorT IO (IOTensor d (Dim 4) a)
     withTensor4d out $ \outdesc outptr -> do
       (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]
       handleStatus (Proxy :: Proxy BadParam)
         $ handleStatus (Proxy :: Proxy ExecutionFailed)
-        $ liftIO $ runDeviceM p
+        $ liftIO $ runDeviceM dev
         $ CuDNN.softmaxForward handle algorithm mode alpha inpdesc inpptr
         beta outdesc outptr
       liftIO $ free alpha >> free beta
@@ -707,15 +716,15 @@ softmaxBackward :: forall m d a
                 -> MTensor (PrimState m) d (Dim 4) a
                 -> m (MTensor (PrimState m) d (Dim 4) a)
 softmaxBackward handle algorithm mode src upgrad = embedCudaError unsafeIOToPrim $ do
-  let p = Proxy :: Proxy d
+  let dev = MT.device src
   withTensor4d (unsafeCoerce src :: IOTensor d (Dim 4) a) $ \srcdesc srcptr -> do
     withTensor4d (unsafeCoerce upgrad :: IOTensor d (Dim 4) a) $ \upgraddesc upgradptr -> do
-      out <- MT.emptyTensor $ MT.shape upgrad :: CudaErrorT IO (IOTensor d (Dim 4) a)
+      out <- MT.emptyTensor dev $ MT.shape upgrad :: CudaErrorT IO (IOTensor d (Dim 4) a)
       withTensor4d out $ \outdesc outptr -> do
         (alpha, beta) <- liftIO $ pure (,) <*> newArray [1] <*> newArray [0]
         handleStatus (Proxy :: Proxy BadParam)
           $ handleStatus (Proxy :: Proxy ExecutionFailed)
-          $ liftIO $ runDeviceM p
+          $ liftIO $ runDeviceM dev
           $ CuDNN.softmaxBackward handle algorithm mode alpha srcdesc srcptr
           upgraddesc upgradptr beta outdesc outptr
         liftIO $ free alpha >> free beta
@@ -757,19 +766,19 @@ transformTensorIO handle srcf dstf src = do
                   else if srcf == CuDNN.nhwc then [a',d',b',c']
                        else error $ "Unsupported input format: " ++ show srcf
       shp = (n:.c:.h:.w:.Z)
-      p = Proxy :: Proxy d
-  withTensorDesc p srcf datatype shp $ \srcdesc -> do
-      withTensorDesc p dstf datatype shp $ \dstdesc -> do
-          dst <- (emptyTensor $ if dstf == CuDNN.nchw
-                                then n:.c:.h:.w:.Z
-                                else n:.h:.w:.c:.Z) :: CudaErrorT IO (IOTensor d (Dim 4) a)
+      dev = MT.device src
+  withTensorDesc dev srcf datatype shp $ \srcdesc -> do
+      withTensorDesc dev dstf datatype shp $ \dstdesc -> do
+          dst <- (emptyTensor dev $ if dstf == CuDNN.nchw
+                                    then n:.c:.h:.w:.Z
+                                    else n:.h:.w:.c:.Z) :: CudaErrorT IO (IOTensor d (Dim 4) a)
           eres1 <- liftIO $ withDevicePtr src $ \srcptr -> runExceptT $ do
             eres2 <- liftIO $ withDevicePtr dst $ \dstptr -> runExceptT $ do
               alpha <- liftIO $ newArray [1]
               beta <- liftIO $ newArray [0]
               handleStatus (Proxy :: Proxy BadParam)
                 $ handleStatus (Proxy :: Proxy ExecutionFailed)
-                $ liftIO $ runDeviceM p
+                $ liftIO $ runDeviceM dev
                 $ CuDNN.transformTensor handle alpha srcdesc srcptr beta
                 dstdesc dstptr
             embedExcept eres2
@@ -788,8 +797,8 @@ batchNormalizationForward :: forall m d a
                           -> m (MTensor (PrimState m) d (Dim 4) a)
 batchNormalizationForward handle mode epsilon x scale bias =
   embedCudaError unsafeIOToPrim $ do
-    let p = Proxy :: Proxy d
-    y <- MT.emptyTensor $ MT.shape x :: CudaErrorT IO (IOTensor d (Dim 4) a)
+    let dev = MT.device x
+    y <- MT.emptyTensor dev $ MT.shape x :: CudaErrorT IO (IOTensor d (Dim 4) a)
     withTensor4d (unsafeCoerce x :: IOTensor d (Dim 4) a) $ \xdesc xptr -> do
       withTensor4d (unsafeCoerce scale :: IOTensor d (Dim 4) a) $ \scaledesc scaleptr -> do
         withTensor4d (unsafeCoerce bias :: IOTensor d (Dim 4) a) $ \biasdesc biasptr -> do
@@ -798,7 +807,7 @@ batchNormalizationForward handle mode epsilon x scale bias =
             let nullDevPtr = CUDA.DevicePtr nullPtr
                 cepsilon = realToFrac epsilon
             handleStatus (Proxy :: Proxy BadParam)
-              $ liftIO $ runDeviceM p
+              $ liftIO $ runDeviceM dev
               $ CuDNN.batchNormalizationForwardTraining handle mode alpha beta xdesc
               xptr ydesc yptr scaledesc scaleptr biasptr 1 nullDevPtr nullDevPtr cepsilon
               nullDevPtr nullDevPtr
@@ -818,11 +827,11 @@ batchNormalizationBackward :: forall m d a
                                 , MTensor (PrimState m) d (Dim 4) a)
 batchNormalizationBackward handle mode epsilon x dy scale =
   embedCudaError unsafeIOToPrim $ do
-    let p = Proxy :: Proxy d
+    let dev = MT.device x
     (dx,dscale,dbias) <- pure (,,)
-                         <*> MT.emptyTensor (MT.shape x)
-                         <*> MT.emptyTensor (MT.shape scale)
-                         <*> MT.emptyTensor (MT.shape scale)
+                         <*> MT.emptyTensor dev (MT.shape x)
+                         <*> MT.emptyTensor dev (MT.shape scale)
+                         <*> MT.emptyTensor dev (MT.shape scale)
                          :: CudaErrorT IO
                             (IOTensor d (Dim 4) a, IOTensor d (Dim 4) a, IOTensor d (Dim 4) a)
     withTensor4d (unsafeCoerce x :: IOTensor d (Dim 4) a) $ \xdesc xptr -> do
@@ -835,7 +844,7 @@ batchNormalizationBackward handle mode epsilon x dy scale =
                 let nullDevPtr = CUDA.DevicePtr nullPtr
                     cepsilon = realToFrac epsilon
                 handleStatus (Proxy :: Proxy BadParam)
-                  $ liftIO $ runDeviceM p
+                  $ liftIO $ runDeviceM dev
                   $ CuDNN.batchNormalizationBackward handle mode alpha beta alpha beta
                   xdesc xptr dydesc dyptr dxdesc dxptr scaledesc scaleptr dscaleptr
                   dbiasptr cepsilon nullDevPtr nullDevPtr

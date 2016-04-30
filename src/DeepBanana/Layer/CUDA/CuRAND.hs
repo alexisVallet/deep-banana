@@ -26,10 +26,10 @@ import qualified DeepBanana.Tensor.Mutable as MT
 -- Naively splits the generator by reseeding one with a random value from the
 -- current generator. Probably not so great statistically, but should do the job
 -- for our purposes.
-splitGenerator :: forall m d . (MonadCuda m, Device d) => Proxy d -> m Generator
-splitGenerator p = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
+splitGenerator :: forall m d . (MonadCuda m, Device d) => d -> m Generator
+splitGenerator d = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
-  newSeed <- liftIO $ runDeviceM p $ withGenerator gen $ \rawGen -> do
+  newSeed <- liftIO $ runDeviceM d $ withGenerator gen $ \rawGen -> do
     res <- CUDA.mallocArray 1
     CuRAND.generateLongLong rawGen res 1
     [newSeed] <- CUDA.peekListArray 1 res
@@ -39,13 +39,13 @@ splitGenerator p = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
 
 uniform :: forall m s d a
         . (MonadCuda m, Device d, TensorScalar a, Shape s)
-        => s -> m (Tensor d s a)
-uniform shp = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
+        => d -> s -> m (Tensor d s a)
+uniform dev shp = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
   let outSize = size shp
-  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d s a)  
+  res <- MT.emptyTensor dev shp :: CudaT IO (MT.IOTensor d s a)  
   liftIO $ MT.withDevicePtr res $ \resptr -> do
-    runDeviceM (Proxy :: Proxy d)
+    runDeviceM dev
       $ withGenerator gen $ \rawGen -> do
       generateUniform rawGen resptr (fromIntegral outSize)
   modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
@@ -53,27 +53,27 @@ uniform shp = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
 
 normal :: forall m d s a
        . (MonadCuda m, Device d, TensorScalar a, Shape s)
-       => s -> a -> a -> m (Tensor d s a)
-normal shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
+       => d -> s -> a -> a -> m (Tensor d s a)
+normal dev shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
   let outSize = size shp
-  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d s a)  
+  res <- MT.emptyTensor dev shp :: CudaT IO (MT.IOTensor d s a)
   liftIO $ MT.withDevicePtr res $ \resptr -> do
-    runDeviceM (Proxy :: Proxy d)
+    runDeviceM dev
       $ withGenerator gen $ \rawGen -> do
-      generateNormal rawGen resptr (fromIntegral outSize) mean std
+        generateNormal rawGen resptr (fromIntegral outSize) mean std
   modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
   unsafeFreeze res >>= return . unsafeCoerce
 
 logNormal :: forall m d s a
        . (MonadCuda m, Device d, TensorScalar a, Shape s)
-       => s -> a -> a -> m (Tensor d s a)
-logNormal shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
+       => d -> s -> a -> a -> m (Tensor d s a)
+logNormal dev shp mean std = embedCudaFromST $ embedCuda unsafeIOToPrim $ do
   gen <- get
   let outSize = size shp
-  res <- MT.emptyTensor shp :: CudaT IO (MT.IOTensor d s a)  
+  res <- MT.emptyTensor dev shp :: CudaT IO (MT.IOTensor d s a)  
   liftIO $ MT.withDevicePtr res $ \resptr -> do
-    runDeviceM (Proxy :: Proxy d)
+    runDeviceM dev
       $ withGenerator gen $ \rawGen -> do
       generateLogNormal rawGen resptr (fromIntegral outSize) mean std
   modify (\gen -> gen {offset = offset gen + fromIntegral outSize})
@@ -87,11 +87,11 @@ dropout :: forall m d s a
 dropout drop_proba = Layer $ \_ x -> embedCudaFromST $ do
   let outSize = size $ shape x
   mask <- embedCuda unsafeIOToPrim $ do
-    mmask <- MT.emptyTensor $ shape x :: CudaT IO (MT.IOTensor d s a)
+    mmask <- MT.emptyTensor (device x) $ shape x :: CudaT IO (MT.IOTensor d s a)
     gen <- get
     liftIO $ do
       MT.withDevicePtr mmask $ \maskptr -> do
-        runDeviceM (Proxy :: Proxy d) $ do
+        runDeviceM (device x) $ do
           withGenerator gen $ \rawGen -> do
             generateUniform rawGen maskptr (fromIntegral outSize)
       MT.threshInplace mmask drop_proba
@@ -101,8 +101,14 @@ dropout drop_proba = Layer $ \_ x -> embedCudaFromST $ do
    AnyFixed fshape -> do
      fx <- shapeConvert fshape x
      fmask <- shapeConvert fshape mask
-     y <- shapeConvert (shape x) $ fx * fmask
-     return (y, broadcast' (shape x) >>> \upgrad -> unsafeRunCudaError $ do
-                fdy <- shapeConvert fshape upgrad
-                dx <- shapeConvert (shape x) $ fdy * fmask
-                return (W Z, dx))
+     withValidUniqueDevice (device x) $ \dev' -> do
+       dfx <- deviceConvert dev' fx
+       dfmask <- deviceConvert dev' fmask
+       dy <- shapeConvert (shape x) $ dfx * dfmask
+       y <- deviceConvert (device x) dy
+       return (y, broadcast' (shape x) >>> \upgrad -> unsafeRunCudaError $ do
+                  fdy <- shapeConvert fshape upgrad
+                  dfdy <- deviceConvert dev' fdy
+                  ddx <- shapeConvert (shape x) $ dfdy * dfmask
+                  dx <- deviceConvert (device x) ddx
+                  return (W Z, dx))

@@ -48,7 +48,10 @@ scale = combinePasses' fwdscale bwdscale
            AnyFixed fshp -> do
              fy <- shapeConvert fshp y
              fdy <- shapeConvert fshp upgrad
-             return (fy <.> fdy, liftFixed1 (x *^) upgrad)
+             withValidUniqueDevice (device y) $ \dev' -> do
+               dfy <- deviceConvert dev' fy
+               dfdy <- deviceConvert dev' fdy
+               return (dfy <.> dfdy, liftFixed1 (x *^) upgrad)
 
 scaleByCst :: (Device d, MonadCudaError m, Shape s, TensorScalar a)
            => a -> Layer m a '[] (Tensor d s a) (Tensor d s a)

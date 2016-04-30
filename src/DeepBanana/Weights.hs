@@ -1,8 +1,12 @@
 {-# LANGUAGE StandaloneDeriving, GeneralizedNewtypeDeriving, TypeFamilies, RankNTypes #-}
+{-|
+Weights for neural networks as heterogenous lists.
+-}
 module DeepBanana.Weights (
-    module DeepBanana.HList
-  , Weights(..)
+    Weights(..)
   , FixShape(..)
+  -- * Re-exports
+  , module DeepBanana.HList
   ) where
 
 import DeepBanana.HList
@@ -12,6 +16,9 @@ import DeepBanana.Tensor.Exception
 import DeepBanana.Prelude
 import Data.Serialize (Serialize)
 
+-- | Weights for a neural network. Represents the weights as the concatenated
+-- @'HList'@ of the individual layer's weights. The @a@ parameter represents the
+-- weights scalar datatype, used for @'FixShape'@ and @'VectorSpace'@ instances.
 newtype Weights (a :: *) l = W {
   unWeights :: HList l
   }
@@ -118,17 +125,22 @@ instance forall a e (l :: [*])
   logBase (W ((:.) x1 xs1)) (W ((:.) x2 xs2)) =
     W $ (:.) (logBase x1 x2) (unWeights (logBase (W xs1) (W xs2) :: Weights a l))
 
-instance (DeviceTransfer (HList l1) (HList l2))
-         => DeviceTransfer (Weights s l1) (Weights s l2) where
-  transfer (W l1) = fmap W $ transfer l1
+instance (HDeviceTransfer l d)
+         => DeviceTransfer (Weights s l) d where
+  type Transferred (Weights s l) d = Weights s (HTransferred l d)
+  transfer d (W l1) = fmap W $ htransfer d l1
 
 instance HMonoid (Weights s) where
   hmempty = W hmempty
   W l1 <+> W l2 = W $ l1 <+> l2
 
+-- | Class for datatypes which are not @'Floating'@ nor @'VectorSpace'@ instances
+-- themselves, but can be lifted to fixed-shape versions which are through an error
+-- monad. Somewhat ad-hoc class Used to implement stochastic gradient descent in
+-- @'DeepBanana.Optimize'@ for non fixed shape datatypes in a type safe manner.
 class (Floating (FixScalar t)) => FixShape t where
   type FixScalar t :: *
-  liftVec :: (MonadError e m, Variant e IncompatibleShape)
+  liftVec :: (MonadError e m, Variant e IncompatibleShape, Variant e IncompatibleDevice)
           => (forall t'
               . (Floating t', VectorSpace t', Scalar t' ~ FixScalar t)
               => t' -> t' -> t')

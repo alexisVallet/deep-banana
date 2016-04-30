@@ -1,9 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-|
-Defines datatype which can be used as scalar elements for a tensor. Also exports much
-needed, although orphan instances for 'CFloat' and 'CDouble': 'Generic', 'NFData' and
-'Serialize'.
+Defines datatypes which can be used as scalar elements for a tensor, providing the low-level GPU operations used to implement higher-level layers. Currently providing support for single precision @'CFloat'@ and double precision @'CDouble'@ datatype.
 -}
 module DeepBanana.Tensor.TensorScalar (
     TensorScalar
@@ -65,12 +63,13 @@ instance Generic CDouble where
 instance S.Serialize CFloat
 instance S.Serialize CDouble
 
+-- | Simple @'sizeOf'@ wrapper with a @'Proxy' a@ instead of more dangerous
+-- @'undefined'@-like bottom values.
 mySizeOf :: forall a . Storable a => Proxy a -> Int
 mySizeOf _ = sizeOf (error "mySizeOf: token parameter that shouldn't have been evaluated" :: a)
 
 -- | Type class for tensor scalars. Basically requires them to be storable, serializable,
--- deepseqable numbers that can be handled by CUDA, Cublas, CuDNN and Haskell. Basically
--- requires low-level numeric routines.
+-- deepseqable numbers that can be handled by CUDA, CuDNN and Haskell.
 class (Floating a, Storable a, VectorSpace a, a ~ Scalar a, S.Serialize a, NFData a)
       => TensorScalar a where
   -- | The corresponding CuDNN datatype.

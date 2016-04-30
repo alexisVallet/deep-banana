@@ -57,7 +57,7 @@ sumRows :: (MonadCuda m, Device d, TensorScalar a)
         => Layer m a '[] (Tensor d (Dim 2) a) (Tensor d (Dim 1) a)
 sumRows = Layer $ \_ x -> do
   let rows:.cols:.Z = shape x
-  oneColVec <- ones $ 1:.cols:.Z
+  oneColVec <- ones (device x) $ 1:.cols:.Z
   (y, bwdy) <- forwardBackward dot (W Z) (x,oneColVec)
   y' <- reshape (rows:.Z) y
   return (y', \ygrad -> let ygrad' = reshape' (rows:.1:.Z) ygrad
@@ -69,7 +69,7 @@ replicateAsCols :: (MonadCuda m, Device d, TensorScalar a)
 replicateAsCols cols = Layer $ \_ x -> do
   let rows:.Z = shape x
   x' <- reshape (rows:.1:.Z) x
-  oneColVec <- ones $ cols:.1:.Z
+  oneColVec <- ones (device x) $ cols:.1:.Z
   (y, bwdy) <- forwardBackward dot (W Z) (x', oneColVec)
   return (y, \ygrad -> let (_,(xgrad,_)) = bwdy ygrad
                        in (W Z, reshape' (rows:.Z) xgrad))
@@ -87,13 +87,13 @@ toScalar = noWeights $ fwdBwdToScalar
           when (size (shape x) /= 1) $ throwVariant $ incompatibleSize $ 
             "Can only convert to scalar tensor with size 1.\nshape: " ++ show (shape x)
           return (unsafeHead $ tensorToList x,
-                  \upgrad -> tensorFromList' (shape x) [upgrad])
+                  \upgrad -> tensorFromList' (device x) (shape x) [upgrad])
 
 addEpsilon :: forall d m s a . (Device d, MonadCudaError m, Shape s, TensorScalar a)
            => Layer m a '[] (Tensor d s a) (Tensor d s a)
 addEpsilon = Layer $ \_ x -> do
   let shp = scalarShape :: s
-  epsTensor <- tensorFromList shp (take (size shp) $ repeat 10E-5)
+  epsTensor <- tensorFromList (device x) shp (take (size shp) $ repeat 10E-5)
                >>= broadcast (shape x) :: m (Tensor d s a)
   (y,bwd) <- forwardBackward add (W Z) (x, epsTensor)
   return (y, \dy -> let (_, (dx,_)) = bwd dy in (W Z, dx))
