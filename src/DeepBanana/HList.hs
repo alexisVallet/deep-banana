@@ -17,6 +17,7 @@ module DeepBanana.HList (
   , SizedList'
   -- * Concatenating heterogeneous lists
   , Concat(..)
+  , ConcatRes
   -- * Heterogeneous categories and monoids
   , HCategory(..)
   , HMonoid(..)
@@ -33,6 +34,7 @@ import DeepBanana.Exception
 import DeepBanana.Prelude hiding (get, put)
 import DeepBanana.Tensor.Exception
 import Data.Serialize
+import Unsafe.Coerce
 
 infixr 3 :.
 -- | An @'HList' l@ is an heterogeneous list indexed by a type-level list @l@ of its
@@ -94,19 +96,35 @@ type SizedList (n :: Nat) (a :: *) = HList (SizedList' n a)
 
 -- | Concatenating and splitting heterogeneous lists.
 class Concat (l1 :: [*]) (l2 :: [*]) where
-  type ConcatRes l1 l2 :: [*]
   hconcat :: HList l1 -> HList l2 -> HList (ConcatRes l1 l2)
   hsplit :: HList (ConcatRes l1 l2) -> (HList l1, HList l2)
 
+type family ConcatRes' (acc :: [*]) (xs :: [*]) :: [*] where
+  ConcatRes' acc '[] = acc
+  ConcatRes' acc (x ': xs) = ConcatRes' (x ': acc) xs
+
+type family ConcatRes (xs :: [*]) (ys :: [*]) :: [*] where
+  ConcatRes xs ys = ConcatRes' ys (Reverse xs)
+
+type family Reverse (xs :: [*]) :: [*] where
+  Reverse xs = Reverse' xs '[]
+
+type family Reverse' (xs :: [*]) (acc :: [*]) :: [*] where
+  Reverse' '[] acc = acc
+  Reverse' (x ': xs) acc = Reverse' xs (x ': acc)
+                    
 instance Concat '[] l2 where
-  type ConcatRes '[] l2 = l2
   hconcat _ l = l
   hsplit l = (Z, l)
 
-instance (Concat l1 l2) => Concat (e ': l1) l2 where
-  type ConcatRes (e ': l1) l2 = e ': ConcatRes l1 l2
-  hconcat (e :. l1) l2 = e :. hconcat l1 l2
-  hsplit (e :. l1andl2) = let (l1,l2) = hsplit l1andl2 in (e :. l1, l2)
+instance forall e l1 l2 . (Concat l1 l2) => Concat (e ': l1) l2 where
+  hconcat (e :. l1) l2 =
+    unsafeCoerce $ e :. hconcat l1 l2
+  hsplit inp =
+    let
+      (e :. l1andl2) = unsafeCoerce inp :: (HList (e ': ConcatRes' l2 (Reverse' l1 '[])))
+      (l1,l2) = hsplit l1andl2 :: (HList l1, HList l2)
+    in (e :. l1, l2)
 
 class (Device d) => HDeviceTransfer (l :: [*]) d where
   type HTransferred l d :: [*]
