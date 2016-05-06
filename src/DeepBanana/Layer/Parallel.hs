@@ -1,6 +1,7 @@
 module DeepBanana.Layer.Parallel (
     layerPar
   , dataPar
+  , ltransfer
   ) where
 
 import Control.Parallel.Strategies
@@ -58,3 +59,13 @@ dataPar d1 d2 l1 l2 = Layer $ \w1 a1a2 -> do
                                       (W w1') (transfer' d1 (W w2' :: Weights s w2))
                                       :: Either (Coproduct '[IncompatibleShape,IncompatibleDevice]) (Weights s w1))
                           in (w', a1a2'))
+
+ltransfer :: forall m t1 t2 a d1 d2
+          . (MonadCuda m, Device d1, Device d2,
+             DeviceTransfer t1 d2, Transferred t1 d2 ~ t2,
+             DeviceTransfer t2 d1, Transferred t2 d1 ~ t1,
+             FixShape t1, FixShape t2, FixScalar t1 ~ FixScalar t2)
+          => d1 -> d2 -> Layer m (FixScalar t1) '[] t1 t2
+ltransfer dev1 dev2 = combinePasses' fwdTransfer bwdTransfer
+  where fwdTransfer x = transfer dev2 x
+        bwdTransfer _ _ = return $ \dy -> transfer' dev1 dy
