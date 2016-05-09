@@ -5,6 +5,7 @@ Weights for neural networks as heterogenous lists.
 module DeepBanana.Weights (
     Weights(..)
   , FixShape(..)
+  , liftVec'
   -- * Re-exports
   , module DeepBanana.HList
   ) where
@@ -145,6 +146,13 @@ class (Floating (FixScalar t)) => FixShape t where
               . (Floating t', VectorSpace t', Scalar t' ~ FixScalar t)
               => t' -> t' -> t')
           -> t -> t -> m t
+
+liftVec' :: forall t . (FixShape t)
+         => (forall t'
+             . (Floating t', VectorSpace t', Scalar t' ~ FixScalar t)
+             => t' -> t' -> t')
+         -> t -> t -> t
+liftVec' f x y = unsafeRunExcept (liftVec f x y :: Either (Coproduct '[IncompatibleShape, IncompatibleDevice]) t)
 
 instance (Floating a) => FixShape (Weights a '[]) where
   type FixScalar (Weights a '[]) = a

@@ -19,7 +19,6 @@ module DeepBanana.Layer (
   , first
   , second
   , terminal
-  , (-<)
   , noWeights
   , effect
   ) where
@@ -124,7 +123,7 @@ Layer f1 *** Layer f2 = Layer $ \w1w2 (a,a') -> do
 
 infixr 4 &&&
 (&&&) :: forall m s w1 w2 a b b' n
-      . (Monad m, Concat w1 w2, AdditiveGroup a)
+      . (Monad m, Concat w1 w2, FixShape a)
       => Layer m s w1 a b -> Layer m s w2 a b'
       -> Layer m s (ConcatRes w1 w2) a (b,b')
 Layer f1 &&& Layer f2 = Layer $ \w1w2 a -> do
@@ -134,7 +133,7 @@ Layer f1 &&& Layer f2 = Layer $ \w1w2 a -> do
   return ((b,b'), \(bgrad,bgrad') -> let (w1grad, agrad1) = bwd1 bgrad
                                          (w2grad, agrad2) = bwd2 bgrad'
                                      in (W $ hconcat (unWeights w1grad) (unWeights w2grad),
-                                         agrad1 ^+^ agrad2))
+                                         liftVec' (^+^) agrad1 agrad2))
 
 first :: (AdditiveGroup b, Monad m) => Layer m s '[] (a, b) a
 first = Layer $ \_ (a, b) -> do
@@ -183,8 +182,3 @@ effect f = noWeights $ \x -> do
   f x
   return (x, \x' -> x')
 
-infixr 4 -<
-(-<) :: forall m i1 i2 w a out
-     . (Monad m, VectorSpace i1, VectorSpace i2)
-     => Layer m a w (i1,i2) out -> i1 -> Layer m a w i2 out
-nn -< inp = terminal inp &&& id' >+> nn
