@@ -222,6 +222,6 @@ print_info = flip evalStateT (InfoState Nothing) $ forM_ [1..] $ \i -> do
      Just cur_roll_cost ->
        modify (\s -> s {rolling_cost = Just $ cur_roll_cost * 0.9 + cost * 0.1})
     fmap fromJust $ gets rolling_cost
-  when (i `rem` 50 == 0) $ do
+  when (i `rem` 1 == 0) $ do
     putStrLn $ "Iteration " ++ pack (show i) ++ " cost rolling average: "
       ++ pack (show roll_cost)

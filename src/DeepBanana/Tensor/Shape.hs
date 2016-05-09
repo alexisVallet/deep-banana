@@ -4,7 +4,8 @@ Shape datatypes for tensors.
 -}
 module DeepBanana.Tensor.Shape (
   -- * Shape datatypes
-    Dim
+    Dyn
+  , Dim
   , Fixed
   -- * Shape type classes
   , Shape(..)
@@ -22,6 +23,9 @@ import DeepBanana.HList
 import DeepBanana.Prelude hiding (get, put)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize as S
+
+-- | @'Dyn'@ represents a fully dynamic shape datatype.
+type Dyn = [Int]
 
 -- | @'Dim' n@, where @n@ is a type level natural, is a dynamic @n@-dimensional shape.
 -- It is represented by an @'HList'@ of fixed size @n@ where all elements are integers.
@@ -77,6 +81,10 @@ instance forall l . (Shape (HList l)) => Shape (HList (SomeNat ': l)) where
   dimensions (SomeNat p :. l) = fromIntegral (natVal p) : dimensions l
   scalarShape = SomeNat (Proxy :: Proxy 1) :. (scalarShape :: HList l)
 
+instance Shape [Int] where
+  dimensions = id
+  scalarShape = [1]
+                                                       
 -- | Utility type class for shapes which are fully defined at the type level.
 class FixedShape (l :: [Nat]) where
   type Fixed' l :: [*]
